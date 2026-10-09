@@ -1,0 +1,8 @@
+/workspace/magpie/target/debug/deps/shlex-52e87323176bbb85.d: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/bytes.rs
+
+/workspace/magpie/target/debug/deps/libshlex-52e87323176bbb85.rlib: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/bytes.rs
+
+/workspace/magpie/target/debug/deps/libshlex-52e87323176bbb85.rmeta: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/bytes.rs
+
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/lib.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/src/bytes.rs:
