@@ -248,7 +248,7 @@ label { display: block; margin-top: 12px; font-weight: 600; }
 input, select, textarea { width: 100%; max-width: 36rem; padding: 8px; border: 1px solid #8a8175; border-radius: 6px; background: #fff; color: #1c1915; }
 button, .button { display: inline-block; margin-top: 12px; background: #0f3d32; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; text-decoration: none; cursor: pointer; }
 button.secondary { background: #fff; color: #0f3d32; border: 1px solid #0f3d32; }
-pre { background: #fff; border: 1px solid #d9d3c7; padding: 12px; overflow: auto; max-width: 52rem; }
+pre { background: #fff; border: 1px solid #d9d3c7; padding: 12px; white-space: pre-wrap; max-width: 52rem; }
 .login { max-width: 36rem; margin: 48px auto; background: #fff; padding: 24px; border-radius: 8px; }
 .who { margin: 0; }
 @media (max-width: 800px) {

@@ -1,0 +1,8 @@
+// 100 tool calls, or 15 distinct tools, from one agent in 10 minutes.
+// The 10 minute bin follows yumaitau/ai-agent-threat-detection Microsoft D14.
+// D14 counts WAF hits (40 hits, 8 rules, 15 URIs). These numbers are for tool calls.
+MagpieAudit_CL
+| where TimeGenerated > ago(1h)
+| where Kind == "decision" and isnotempty(Tool)
+| summarize Calls = count(), DistinctTools = dcount(Tool), Tools = make_set(Tool, 20) by AgentId, Actor, Window = bin(TimeGenerated, 10m)
+| where Calls >= 100 or DistinctTools >= 15

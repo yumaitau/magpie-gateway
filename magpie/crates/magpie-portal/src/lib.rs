@@ -817,7 +817,7 @@ async fn policies_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 		})
 		.unwrap_or_else(|| "false".into());
 	let body = format!(
-		r#"<p>The visual editor writes CEL. Tool and JWT fields can be attached to agentgateway as an allow rule. Marking and region rules are enforced by this portal's guardrail. An empty approved-tool list is <code>false</code>, which denies every tool.</p>
+		r#"<p>The visual editor writes CEL. Tool and JWT fields can be attached to the proxy as an allow rule. Marking and region rules are enforced by this portal's guardrail. An empty approved-tool list is <code>false</code>, which denies every tool.</p>
 <h2>Approved tools</h2>
 <pre>{}</pre>
 <h2>Example</h2>

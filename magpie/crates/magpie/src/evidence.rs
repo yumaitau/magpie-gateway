@@ -87,11 +87,19 @@ pub fn monthly_rows(stats: &MonthlyStats) -> Vec<EvidenceRow> {
 		},
 		EvidenceRow {
 			framework: "Agentic AI addendum (4 June 2026)".into(),
-			reference: "AGT.3 and AGT.7".into(),
-			source: "https://www.digital.gov.au/policy/ai/agentic-ai-addendum".into(),
+			reference: "AGT.3".into(),
+			source: "https://www.digital.gov.au/policy/ai/agentic-ai-addendum-statements-design".into(),
 			magpie_control: "Default deny for unapproved tools, approval queue, kill switch.".into(),
 			observation: format!("{} policy changes, {} blocks.", stats.policy_changes, stats.blocks),
-			relationship: "Interpretive. The addendum is best-practice guidance. It asks for least privilege, high-impact approvals and kill switches. It does not name this product.".into(),
+			relationship: "Interpretive. AGT.3 is a published Design statement. AGT.3.3 covers least privilege and guardrails, AGT.3.4 covers kill switches, and AGT.3.5 covers approval of high-impact tools. Magpie supplies those controls. Designing the workflow remains the agency's job.".into(),
+		},
+		EvidenceRow {
+			framework: "Agentic AI addendum (4 June 2026)".into(),
+			reference: "AGT.7".into(),
+			source: "https://www.digital.gov.au/policy/ai/agentic-ai-addendum-statements-integrate".into(),
+			magpie_control: "Approved tool list and audit of tool calls.".into(),
+			observation: format!("{} blocked decisions.", stats.blocks),
+			relationship: "Interpretive. AGT.7 is a published Integrate statement. AGT.7.1 says agencies should limit tool access and audit tool activity. The allow list is one way to do that. Choosing protocols is still a design decision.".into(),
 		},
 		EvidenceRow {
 			framework: "Agentic AI addendum (4 June 2026)".into(),
@@ -107,7 +115,7 @@ pub fn monthly_rows(stats: &MonthlyStats) -> Vec<EvidenceRow> {
 			source: "https://www.digital.gov.au/policy/ai/agentic-ai-addendum-statements-monitor".into(),
 			magpie_control: "Audit search, detection queries, DLP hit review.".into(),
 			observation: format!("{} DLP hits.", stats.dlp_hits),
-			relationship: "Interpretive. Monitoring for unauthorised tool use is a must. Queries are provided. Somebody still has to look at them.".into(),
+			relationship: "Interpretive. AGT.8 is a published Monitor statement. AGT.8.1 requires continuous monitoring. Unauthorised tool use is one example under that criterion. Queries are provided. Somebody still has to look at them.".into(),
 		},
 	]
 }

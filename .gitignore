@@ -21,6 +21,8 @@ controller/testbox
 
 # JavaScript / TypeScript dependencies and generated artifacts
 node_modules/
+magpie/axe/test-results/
+magpie/axe/playwright-report/
 ui/dist/
 ui/src/cel.d.ts
 ui/src/gateway-admin.d.ts

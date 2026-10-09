@@ -1,0 +1,6 @@
+apiVersion: v2
+name: magpie-gateway
+description: Magpie Gateway portal. This chart does not deploy the agentgateway proxy.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
