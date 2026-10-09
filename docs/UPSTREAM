@@ -1,0 +1,8 @@
+# Pinned upstream
+
+Remote: https://github.com/agentgateway/agentgateway.git
+Branch: main
+Commit: 85d1f087dd75140e44bda19452c4f3b7fb120e16
+Subject: Allow sending callout requests through CONNECT tunnel (#3864)
+Imported: 2026-10-09
+Licence: Apache-2.0

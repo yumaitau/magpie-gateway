@@ -1,0 +1,46 @@
+# Tests a merge of upstream agentgateway main into this branch.
+# It does not push. A conflict fails the job so a person can merge it.
+name: upstream-sync
+
+on:
+  schedule:
+    # Monday 21:00 Australia/Sydney is 10:00 UTC during AEST (UTC+10).
+    # During AEDT the local time is 22:00. Weekly is the requirement.
+    - cron: "0 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  merge-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream main
+        run: |
+          git remote add upstream https://github.com/agentgateway/agentgateway.git
+          git fetch upstream main
+
+      - name: Merge upstream main without committing
+        run: |
+          set -euo pipefail
+          if ! git merge --no-commit --no-ff upstream/main; then
+            echo "Merge conflict with upstream/main. Resolve on a branch. Do not push from this job."
+            git status --short
+            exit 1
+          fi
+          echo "Merge applied cleanly."
+
+      - name: Test the Magpie workspace when it is present
+        run: |
+          set -euo pipefail
+          if [ -f magpie/Cargo.toml ]; then
+            cargo test --manifest-path magpie/Cargo.toml --offline || cargo test --manifest-path magpie/Cargo.toml
+          else
+            echo "magpie/Cargo.toml is not on this branch yet."
+          fi
