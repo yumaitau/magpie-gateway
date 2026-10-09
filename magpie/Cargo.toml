@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/magpie"]
+members = ["crates/magpie", "crates/magpie-portal"]
 
 [workspace.package]
 edition = "2024"

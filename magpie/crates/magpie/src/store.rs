@@ -1,7 +1,7 @@
-//! SQLite control-plane store. Postgres uses the same tables via the schema
-//! in `POSTGRES_SCHEMA`. The portal build that talks to Postgres is selected
-//! with a `postgres://` URL in the portal crate. This file's tested path is
-//! SQLite, including the triggers that reject audit updates and deletes.
+//! SQLite control-plane store. `POSTGRES_SCHEMA` is the same tables for an
+//! operator who applies it themselves. This crate's queries run on SQLite,
+//! including the triggers that reject audit updates and deletes. A
+//! `postgres://` URL is refused by the portal rather than opened as a file.
 
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
@@ -238,6 +238,19 @@ impl Store {
 			 FROM revisions WHERE kind = ?1 AND doc_id = ?2 ORDER BY created_at",
 		)?;
 		let mut rows = statement.query(params![kind, doc_id])?;
+		let mut revisions = Vec::new();
+		while let Some(row) = rows.next()? {
+			revisions.push(read_revision(row)?);
+		}
+		Ok(revisions)
+	}
+
+	pub fn list_pending_revisions(&self) -> Result<Vec<Revision>> {
+		let mut statement = self.conn.prepare(
+			"SELECT id, kind, doc_id, actor, created_at, before_json, after_json, status, approver
+			 FROM revisions WHERE status = 'pending' ORDER BY created_at",
+		)?;
+		let mut rows = statement.query([])?;
 		let mut revisions = Vec::new();
 		while let Some(row) = rows.next()? {
 			revisions.push(read_revision(row)?);
