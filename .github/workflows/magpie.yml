@@ -33,7 +33,11 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path magpie/Cargo.toml --all -- --check
       - name: Clippy
-        run: CLIPPY_CONF_DIR=magpie cargo clippy --manifest-path magpie/Cargo.toml --all-targets -- -D warnings
+        # Relative CLIPPY_CONF_DIR is resolved from the rustc cwd (the magpie
+        # workspace), so "magpie" does not exist there. Pin the directory that
+        # holds magpie/.clippy.toml and keep the proxy config at the repo root
+        # out of this workspace.
+        run: CLIPPY_CONF_DIR="${GITHUB_WORKSPACE}/magpie" cargo clippy --manifest-path magpie/Cargo.toml --all-targets -- -D warnings
       - name: Test
         run: cargo test --manifest-path magpie/Cargo.toml
 
@@ -90,7 +94,7 @@ jobs:
           name: magpie-portal-sbom
           path: magpie-portal.cdx.json
       - name: Scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: magpie-gateway-portal:ci
           format: table
