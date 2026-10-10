@@ -325,6 +325,26 @@ bootstrap_models() {
 	printf '%s' "${out%,}"
 }
 
+# ghcr.io/owner/name:tag -> ghcr.io/owner/name@sha256:..., so each up deploys
+# an exact image and a new :main build actually rolls out. Other registries,
+# and images already pinned, are left alone.
+pin_image() {
+	local image="$1" repo tag token digest
+	[[ $image == ghcr.io/*:* && $image != *@sha256:* ]] || {
+		printf '%s' "$image"
+		return
+	}
+	repo="${image#ghcr.io/}"
+	tag="${repo##*:}"
+	repo="${repo%:*}"
+	token="$(curl -fsS "https://ghcr.io/token?scope=repository:$repo:pull" | jq -r .token)" || die "Cannot read $image from GHCR."
+	digest="$(curl -fsSI -H "Authorization: Bearer $token" \
+		-H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+		"https://ghcr.io/v2/$repo/manifests/$tag" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest" {print $2}')"
+	[[ $digest == sha256:* ]] || die "Cannot resolve $image to a digest."
+	printf 'ghcr.io/%s@%s' "$repo" "$digest"
+}
+
 render_terraform() {
 	local tf="$DIR/terraform"
 	[[ -n "$(people)" ]] || die "No keys. Add one: ./magpie.sh key add $CLIENT <person>"
@@ -363,8 +383,8 @@ EOF
 		jq -n \
 			--arg name "$CLIENT" \
 			--arg region "$AWS_REGION" \
-			--arg portal_image "$PORTAL_IMAGE" \
-			--arg proxy_image "$PROXY_IMAGE" \
+			--arg portal_image "$(pin_image "$PORTAL_IMAGE")" \
+			--arg proxy_image "$(pin_image "$PROXY_IMAGE")" \
 			--rawfile proxy_config "$DIR/agentgateway.yaml" \
 			--arg models "$(bootstrap_models)" \
 			--arg owner "$OWNER_EMAIL" \
@@ -428,6 +448,9 @@ cmd_up() {
 	tf apply
 	local base
 	base="$(url)"
+	step "Waiting for the new task to start"
+	aws ecs wait services-stable --cluster "magpie-$CLIENT" --services "magpie-$CLIENT" ||
+		die "The ECS service did not settle. Check the /magpie/$CLIENT log group."
 	step "Waiting for the gateway to answer (CloudFront can take 10 to 15 minutes the first time)"
 	local tries=0
 	until curl -fs -o /dev/null "$base/healthz"; do
@@ -677,7 +700,7 @@ cmd_check() {
 	body="$(curl -s -w '\n%{http_code}' "$base/v1/messages" \
 		-H "Authorization: Bearer $key" -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
 		-d "{\"model\":\"$model\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Example only. Our ABN is 12 000 000 041.\"}]}")"
-	[[ ${body##*$'\n'} == 403 ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
+	[[ ${body##*$'\n'} == 400 && $body == *"Magpie Gateway blocked"* ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
 
 	code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/guardrails/request")"
 	[[ $code == 404 ]] && result "portal guardrail routes are not public" ok || result "portal guardrail routes are not public" fail "HTTP $code"

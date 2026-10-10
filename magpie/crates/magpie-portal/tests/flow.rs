@@ -312,7 +312,7 @@ async fn dlp_webhook_blocks_a_prompt_with_an_example_abn() {
 		.expect("webhook");
 	assert_eq!(response.status(), StatusCode::OK);
 	let body: serde_json::Value = response.json().await.expect("body");
-	assert_eq!(body["action"]["status_code"], 403, "{body}");
+	assert_eq!(body["action"]["status_code"], 400, "{body}");
 	let text = body.to_string();
 	assert!(!text.contains("12 000 000 041"), "{text}");
 	assert!(!text.contains("12000000041"), "{text}");

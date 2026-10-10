@@ -93,7 +93,8 @@ test('the per-agent kill switch set in the portal blocks that person, and cleari
   await setKillAgent(page, person);
   try {
     const blocked = await ask(request, 'Reply with the word ready.');
-    expect(blocked.status(), await blocked.text()).toBe(403);
+    expect(blocked.status(), await blocked.text()).toBe(400);
+    expect((await blocked.json()).error.message).toContain('Magpie Gateway blocked');
   } finally {
     await setKillAgent(page, '');
   }

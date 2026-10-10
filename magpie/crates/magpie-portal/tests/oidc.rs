@@ -293,5 +293,5 @@ async fn deployment_models_are_approved_on_first_start() {
 		"{approved}"
 	);
 	let other: Value = ask("claude-fable-5-1").await.unwrap().json().await.unwrap();
-	assert_eq!(other["action"]["status_code"], 403, "{other}");
+	assert_eq!(other["action"]["status_code"], 400, "{other}");
 }

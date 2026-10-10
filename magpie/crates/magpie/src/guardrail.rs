@@ -234,11 +234,18 @@ pub fn webhook_response(
 	_messages: &[WebhookMessage],
 	response_side: bool,
 ) -> Value {
+	// 400 with an error object both Anthropic and OpenAI clients display.
+	// Claude Code reports any 403 as "Failed to authenticate", which sends
+	// people looking at their key instead of their prompt.
 	let block = |message: String| {
+		let body = json!({
+			"type": "error",
+			"error": {"type": "invalid_request_error", "message": message}
+		});
 		json!({
 			"action": {
-				"body": message,
-				"status_code": 403,
+				"body": body.to_string(),
+				"status_code": 400,
 				"reason": outcome.reason
 			}
 		})
@@ -435,7 +442,7 @@ mod tests {
 		let outcome = decide(&input, &policy);
 		assert_eq!(outcome.action, Action::Redact);
 		let body = webhook_response(&outcome, &messages, false);
-		assert_eq!(body["action"]["status_code"], 403);
+		assert_eq!(body["action"]["status_code"], 400);
 		let text = body["action"]["body"].as_str().unwrap();
 		assert!(text.contains("new conversation"), "{text}");
 		assert!(!text.contains("000 000 041"), "{text}");
