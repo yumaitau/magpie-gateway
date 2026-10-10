@@ -842,8 +842,18 @@ cmd_kubectl() {
 MAGPIE_HOME="${MAGPIE_HOME:-$HOME/.config/magpie}"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
-OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+OPENCODE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 VSCODE_MODELS="$HOME/Library/Application Support/Code/User/chatLanguageModels.json"
+
+# opencode reads opencode.jsonc after opencode.json, so a model set in the
+# .jsonc wins. Edit that one when it exists and holds plain JSON.
+opencode_config() {
+	if [[ -f "$OPENCODE_DIR/opencode.jsonc" ]] && jq empty "$OPENCODE_DIR/opencode.jsonc" >/dev/null 2>&1; then
+		printf '%s' "$OPENCODE_DIR/opencode.jsonc"
+	else
+		printf '%s' "$OPENCODE_DIR/opencode.json"
+	fi
+}
 
 backup_once() {
 	[[ -f $1 && ! -e "$1.before-magpie" ]] && cp -p "$1" "$1.before-magpie"
@@ -924,10 +934,17 @@ cmd_use() {
 		say "  model $sonnet through provider magpie"
 	fi
 
-	if [[ -d $(dirname "$OPENCODE_CONFIG") ]] || command -v opencode >/dev/null 2>&1; then
+	if [[ -d $OPENCODE_DIR ]] || command -v opencode >/dev/null 2>&1; then
+		mkdir -p "$OPENCODE_DIR"
+		local OPENCODE_CONFIG
+		OPENCODE_CONFIG="$(opencode_config)"
 		step "opencode ($OPENCODE_CONFIG)"
-		mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+		[[ -f "$OPENCODE_DIR/opencode.jsonc" && $OPENCODE_CONFIG != *.jsonc ]] &&
+			say "  opencode.jsonc has comments, so it was left alone. If it sets a model, change it to magpie/$sonnet."
 		backup_once "$OPENCODE_CONFIG"
+		local previous
+		previous="$(jq -r '.model // ""' "$OPENCODE_CONFIG" 2>/dev/null || true)"
+		[[ $previous == magpie/* ]] || printf '%s\n' "$previous" >"$MAGPIE_HOME/opencode-previous-model"
 		local models
 		models="$(jq -n --arg o "$opus" --arg s "$sonnet" --arg h "$haiku" \
 			'[$o, $s, $h] | map(select(. != "")) | map({key: ., value: {name: ("Magpie " + .)}}) | from_entries')"
@@ -935,7 +952,9 @@ cmd_use() {
 			--argjson models "$models" --arg client "$CLIENT" '
 			.provider = ((.provider // {}) + {magpie: {
 				npm: "@ai-sdk/anthropic", name: ("Magpie Gateway (" + $client + ")"),
-				options: {baseURL: $base, apiKey: $key}, models: $models}})
+				# The Anthropic SDK sends apiKey as x-api-key; the gateway reads the bearer header.
+				options: {baseURL: $base, apiKey: $key, headers: {Authorization: ("Bearer " + $key)}},
+				models: $models}})
 			| .model = $model'
 		say "  model magpie/$sonnet"
 	fi
@@ -976,13 +995,19 @@ cmd_unuse() {
 		say "Claude Code: gateway settings removed."
 	fi
 	codex_strip && [[ -f $CODEX_CONFIG ]] && say "Codex: gateway provider removed, previous model restored."
-	if [[ -f $OPENCODE_CONFIG ]]; then
-		json_edit "$OPENCODE_CONFIG" '
-			(if (.model // "") | startswith("magpie/") then del(.model) else . end)
+	local file
+	for file in "$OPENCODE_DIR/opencode.json" "$OPENCODE_DIR/opencode.jsonc"; do
+		[[ -f $file ]] && jq -e '.provider.magpie' "$file" >/dev/null 2>&1 || continue
+		local previous=""
+		[[ -f "$MAGPIE_HOME/opencode-previous-model" ]] && previous="$(<"$MAGPIE_HOME/opencode-previous-model")"
+		json_edit "$file" --arg previous "$previous" '
+			(if (.model // "") | startswith("magpie/") then
+				(if $previous != "" then .model = $previous else del(.model) end)
+			else . end)
 			| if .provider then .provider |= del(.magpie) else . end
 			| if .provider == {} then del(.provider) else . end'
-		say "opencode: gateway provider removed."
-	fi
+		say "opencode: gateway provider removed from $file."
+	done
 	if [[ -f $VSCODE_MODELS ]]; then
 		json_edit "$VSCODE_MODELS" 'map(select((.name // "") | startswith("Magpie Gateway") | not))'
 		say "Copilot in VS Code: Magpie models removed."
