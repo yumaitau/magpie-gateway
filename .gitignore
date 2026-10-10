@@ -2,6 +2,7 @@
 .claude
 .codex
 /target
+magpie/target/
 /.github/rust-cache/
 /.github/rust-cache-state/
 .vscode

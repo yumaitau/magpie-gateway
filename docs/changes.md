@@ -10,6 +10,7 @@ Upstream agentgateway is unmodified apart from the fork notice in
 | `docs/upstream-sync.md` | How to merge `upstream/main` |
 | `docs/UPSTREAM` | Pinned upstream commit |
 | `docs/changes.md` | This list |
+| `magpie/` | Policy library: DLP, PSPF, sovereignty, approvals, CEL, identity, SCIM, audit, evidence |
 
 Later commits add `magpie/`, `deploy/`, `detections/` and the Magpie
 workflows. Those commits update this table.
