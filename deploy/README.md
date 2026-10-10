@@ -43,6 +43,7 @@ syft magpie-gateway-portal:0.1.0 -o cyclonedx-json > magpie-portal.cdx.json
 
 ```bash
 export MAGPIE_SESSION_SECRET="$(openssl rand -hex 32)"
+export MAGPIE_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 
@@ -62,7 +63,8 @@ call.
 ## Helm
 
 ```bash
-helm template magpie deploy/helm/magpie-gateway --set sessionSecret="$(openssl rand -hex 32)"
+helm template magpie deploy/helm/magpie-gateway --set sessionSecret="$(openssl rand -hex 32)" \
+  --set adminPassword="$(openssl rand -hex 16)"
 ```
 
 The chart refuses an empty `sessionSecret` and the old defaults
@@ -72,6 +74,8 @@ still runs the portal only. Use Compose when you want the proxy beside it.
 
 ## Cloud examples
 
-`terraform/aws` is ECS Fargate in `ap-southeast-2`. `terraform/azure`
-is a Container App in `australiaeast`. Both expect you to supply the
-image and a session secret. They are examples, not a landing zone.
+`terraform/aws` is the full stack `./magpie.sh up` deploys: the portal
+and agentgateway in one Fargate task in `ap-southeast-2`, EFS for the
+portal database, an internal load balancer and a CloudFront address.
+See `docs/engagement.md`. `terraform/azure` is still a portal-only
+Container App example in `australiaeast`.

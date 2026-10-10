@@ -34,14 +34,30 @@ spec:
             - name: MAGPIE_LISTEN
               value: 0.0.0.0:8088
             - name: MAGPIE_COOKIE_SECURE
-              value: {{ .Values.cookieSecure | quote }}
+              value: {{ ternary "1" "0" .Values.cookieSecure | quote }}
             - name: MAGPIE_SESSION_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-portal
                   key: sessionSecret
-            - name: MAGPIE_BREAK_GLASS
-              value: {{ ternary "1" "0" .Values.breakGlass | quote }}
+            - name: MAGPIE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-portal
+                  key: adminPassword
+            - name: MAGPIE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-portal
+                  key: oidcClientSecret
+            - name: MAGPIE_ENTRA_TENANT_ID
+              value: {{ .Values.oidc.entraTenantId | quote }}
+            - name: MAGPIE_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: MAGPIE_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: MAGPIE_PUBLIC_URL
+              value: {{ .Values.oidc.publicUrl | quote }}
           volumeMounts:
             - name: data
               mountPath: /data

@@ -23,7 +23,17 @@ presidio:
 # Required. helm template fails while this is empty or a known default.
 sessionSecret: ""
 cookieSecure: true
-breakGlass: false
+# Sign-in. Set adminPassword (16+ characters), oidc.clientId, or both.
+# The chart fails when neither is set.
+adminPassword: ""
+oidc:
+  # Microsoft Entra ID tenant ID, or leave empty and set issuer.
+  entraTenantId: ""
+  issuer: ""
+  clientId: ""
+  clientSecret: ""
+  # External URL, used for the redirect URI.
+  publicUrl: ""
 
 persistence:
   size: 1Gi

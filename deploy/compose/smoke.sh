@@ -3,7 +3,7 @@
 # server never saw it. Then call the approved tool and require that it did.
 set -eu
 
-ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
+ROOT="$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)"
 compose() {
 	docker compose -f "$ROOT/deploy/compose/docker-compose.yml" "$@"
 }

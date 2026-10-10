@@ -1,6 +1,8 @@
 # Portal, notes server, and agentgateway on one network.
 # The proxy allow list is deploy/compose/agentgateway.yaml.
-# Set MAGPIE_SESSION_SECRET before starting. The portal refuses the old defaults.
+# Set MAGPIE_SESSION_SECRET and MAGPIE_ADMIN_PASSWORD (16+ characters) before
+# starting. The portal refuses the old defaults and will not start without a
+# way to sign in.
 
 services:
   portal-init:
@@ -35,7 +37,7 @@ services:
       MAGPIE_DEMO: "0"
       MAGPIE_SEED_EXAMPLES: "0"
       MAGPIE_MOCK_IDP: "0"
-      MAGPIE_BREAK_GLASS: "0"
+      MAGPIE_ADMIN_PASSWORD: ${MAGPIE_ADMIN_PASSWORD:?set MAGPIE_ADMIN_PASSWORD}
     volumes:
       - portal-data:/data
     tmpfs:

@@ -7,6 +7,7 @@ on:
       - deploy/**
       - detections/**
       - docs/**
+      - magpie.sh
       - .github/workflows/magpie.yml
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - deploy/**
       - detections/**
       - docs/**
+      - magpie.sh
       - .github/workflows/magpie.yml
 
 permissions:
@@ -40,6 +42,22 @@ jobs:
         run: CLIPPY_CONF_DIR="${GITHUB_WORKSPACE}/magpie" cargo clippy --manifest-path magpie/Cargo.toml --all-targets -- -D warnings
       - name: Test
         run: cargo test --manifest-path magpie/Cargo.toml
+
+  deploy-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -S warning magpie.sh deploy/compose/smoke.sh
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+      - name: Terraform
+        working-directory: deploy/terraform/aws
+        run: |
+          terraform fmt -check
+          terraform init -backend=false -input=false
+          terraform validate
 
   axe:
     runs-on: ubuntu-latest
@@ -108,6 +126,7 @@ jobs:
       - name: Proxy denies an unapproved tool
         run: |
           export MAGPIE_SESSION_SECRET="$(openssl rand -hex 32)"
+          export MAGPIE_ADMIN_PASSWORD="$(openssl rand -hex 16)"
           export MAGPIE_PORTAL_IMAGE=magpie-gateway-portal:ci
           docker compose -f deploy/compose/docker-compose.yml up -d --no-build
           deploy/compose/smoke.sh
@@ -116,6 +135,7 @@ jobs:
         env:
           # Compose interpolates the file before down. The secret is not used.
           MAGPIE_SESSION_SECRET: unused
+          MAGPIE_ADMIN_PASSWORD: unused
         run: docker compose -f deploy/compose/docker-compose.yml down -v
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

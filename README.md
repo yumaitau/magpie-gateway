@@ -1,4 +1,4 @@
-> **Fork notice.** This private repository (`yumaitau/magpie-gateway`) is Yuma IT's working copy of [agentgateway](https://github.com/agentgateway/agentgateway) (`main` at `85d1f087`, Apache-2.0). Upstream history is preserved so later syncs can merge `upstream/main`. Product work for Australian clients lives on later branches. agentgateway and Linux Foundation names and marks remain those of their owners. The text below is the upstream README, unchanged apart from this notice.
+> **Fork notice.** This private repository (`yumaitau/magpie-gateway`) is Yuma IT's working copy of [agentgateway](https://github.com/agentgateway/agentgateway) (`main` at `85d1f087`, Apache-2.0). Upstream history is preserved so later syncs can merge `upstream/main`. Product work for Australian clients lives on later branches. To stand it up for a client, see [docs/engagement.md](docs/engagement.md) and `./magpie.sh`. agentgateway and Linux Foundation names and marks remain those of their owners. The text below is the upstream README, unchanged apart from this notice.
 
 <div align="center">
   <picture>

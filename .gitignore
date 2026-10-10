@@ -48,3 +48,9 @@ cfg.yaml
 .beads/proxieddb/
 
 /tools/.bin/
+
+# Magpie engagements hold client secrets and Terraform state.
+/engagements/
+.terraform/
+*.tfstate
+*.tfstate.*
