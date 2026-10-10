@@ -16,6 +16,7 @@ llm:
               target:
                 host: 127.0.0.1:8088
               headers:
+                ":path": "'/guardrails/request'"
                 x-magpie-region: "'ap-southeast-2'"
                 x-magpie-destination: "'example-au-model'"
                 x-magpie-model: "'example-au-model'"
@@ -24,6 +25,7 @@ llm:
               target:
                 host: 127.0.0.1:8088
               headers:
+                ":path": "'/guardrails/response'"
                 x-magpie-region: "'ap-southeast-2'"
                 x-magpie-destination: "'example-au-model'"
                 x-magpie-model: "'example-au-model'"

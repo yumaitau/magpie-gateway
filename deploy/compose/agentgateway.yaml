@@ -1,0 +1,43 @@
+# Used by deploy/compose/docker-compose.yml. Host names are Compose
+# service names. The allow list is the expression the portal generates
+# for one approved tool. An empty list would be `false`.
+#
+# The webhook path is the portal route. Agentgateway's default webhook
+# path is /request and /response, which this portal does not serve.
+
+llm:
+  models:
+    - name: example-au-model
+      provider: openai
+      params:
+        apiKey: $EXAMPLE_API_KEY
+      guardrails:
+        request:
+          - webhook:
+              target:
+                host: portal:8088
+              headers:
+                ":path": "'/guardrails/request'"
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'example-au-model'"
+                x-magpie-model: "'example-au-model'"
+        response:
+          - webhook:
+              target:
+                host: portal:8088
+              headers:
+                ":path": "'/guardrails/response'"
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'example-au-model'"
+                x-magpie-model: "'example-au-model'"
+
+mcp:
+  port: 3000
+  policies:
+    mcpAuthorization:
+      rules:
+        - "mcp.tool.name in ['example_search']"
+  targets:
+    - name: notes
+      mcp:
+        host: http://notes:3001/mcp

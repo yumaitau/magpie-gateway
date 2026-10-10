@@ -32,7 +32,9 @@ note, not a penetration test. Checked against the tree on 9 October 2026.
 
 - TLS is terminated in front of the portal and the proxy. The Compose
   and Helm examples do not ship a certificate.
-- The session secret is not the default `change-me`.
+- Outside demo mode the process exits if the session secret is missing
+  or is `change-me`, `dev-only-change-me`, or `magpie-example-key`.
+  Demo mode may omit it and then uses `dev-only-change-me`.
 - Break-glass stays off except during an identity-provider outage, and
   that use is reviewed.
 - Sovereign mode is on for clients who need Australian residency.
