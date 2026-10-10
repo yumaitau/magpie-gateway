@@ -856,7 +856,9 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
 		tally_table(&events, |event| event.tool.as_str(), "Tool"),
 		tally_table(&events, |event| event.agent_id.as_str(), "Agent"),
 		table(
-			&["When", "Actor", "Agent", "Tool", "Decision", "Reason"],
+			&[
+				"When", "Actor", "Agent", "Model", "Tool", "Decision", "Reason"
+			],
 			&rows_audit(&events[..events.len().min(8)])
 		)
 	);
@@ -1268,7 +1270,7 @@ async fn audit_page(
 		ui::esc(&filter.kind),
 		table(
 			&[
-				"When", "Kind", "Actor", "Agent", "Tool", "Decision", "Reason"
+				"When", "Kind", "Actor", "Agent", "Model", "Tool", "Decision", "Reason"
 			],
 			&rows_audit_full(&events)
 		)
@@ -2631,6 +2633,7 @@ fn rows_audit(events: &[AuditEvent]) -> Vec<Vec<String>> {
 				event.at.to_rfc3339(),
 				event.actor.clone(),
 				event.agent_id.clone(),
+				event.model.clone(),
 				event.tool.clone(),
 				event.decision.clone(),
 				event.reason.clone(),
@@ -2648,6 +2651,7 @@ fn rows_audit_full(events: &[AuditEvent]) -> Vec<Vec<String>> {
 				event.kind.clone(),
 				event.actor.clone(),
 				event.agent_id.clone(),
+				event.model.clone(),
 				event.tool.clone(),
 				event.decision.clone(),
 				event.reason.clone(),
