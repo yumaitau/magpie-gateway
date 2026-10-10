@@ -81,6 +81,16 @@ async fn main() {
 		public_url: env("MAGPIE_PUBLIC_URL").unwrap_or_default(),
 		role_map,
 		webhook_token: env("MAGPIE_WEBHOOK_TOKEN").unwrap_or_default(),
+		bootstrap_models: env("MAGPIE_BOOTSTRAP_MODELS")
+			.unwrap_or_default()
+			.split(',')
+			.filter_map(|item| {
+				let (name, region) = item.trim().split_once('=')?;
+				Some((name.trim().to_string(), region.trim().to_string()))
+			})
+			.filter(|(name, _)| !name.is_empty())
+			.collect(),
+		bootstrap_owner: env("MAGPIE_BOOTSTRAP_OWNER").unwrap_or_default(),
 		hmac_secret: secret.clone(),
 		session_secret: secret,
 		scim_token: env("MAGPIE_SCIM_TOKEN").unwrap_or_default(),

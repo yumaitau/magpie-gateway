@@ -125,6 +125,8 @@ fn portal_config(issuer: String, webhook_token: &str) -> Config {
 		public_url: String::new(),
 		role_map,
 		webhook_token: webhook_token.into(),
+		bootstrap_models: vec![("claude-sonnet-5-5".into(), "ap-southeast-2".into())],
+		bootstrap_owner: "jordan.lee@example.com.au".into(),
 		hmac_secret: "test-secret".into(),
 		session_secret: "test-secret".into(),
 		scim_token: String::new(),
@@ -264,4 +266,32 @@ async fn guardrail_webhook_requires_the_configured_token() {
 		.await
 		.unwrap();
 	assert_eq!(ok.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn deployment_models_are_approved_on_first_start() {
+	let portal = spawn_portal(portal_config("http://127.0.0.1:9".into(), "")).await;
+	let client = http();
+	let ask = |model: &'static str| {
+		client
+			.post(format!("{portal}/guardrails/request"))
+			.header("x-magpie-model", model)
+			.header("x-magpie-region", "ap-southeast-2")
+			.header("x-magpie-destination", model)
+			.header("x-magpie-actor", "jordan")
+			.json(&json!({"body": {"messages": [{"role": "user", "content": "Write a unit test."}]}}))
+			.send()
+	};
+	let approved: Value = ask("claude-sonnet-5-5")
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert!(
+		approved["action"].get("status_code").is_none(),
+		"{approved}"
+	);
+	let other: Value = ask("claude-fable-5-1").await.unwrap().json().await.unwrap();
+	assert_eq!(other["action"]["status_code"], 403, "{other}");
 }

@@ -51,6 +51,11 @@ pub struct Config {
 	pub role_map: RoleMap,
 	/// When set, the proxy must send it as `x-magpie-webhook-token` on guardrail and MCP check calls.
 	pub webhook_token: String,
+	/// Models the deployment routes to, as (name, region). Each gets a provider
+	/// record and an approval on first start, so day-one traffic is not denied.
+	pub bootstrap_models: Vec<(String, String)>,
+	/// Business owner recorded on those approvals.
+	pub bootstrap_owner: String,
 	pub hmac_secret: String,
 	pub session_secret: String,
 	pub scim_token: String,
@@ -117,6 +122,7 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 	if config.seed_examples {
 		seed(&store)?;
 	}
+	bootstrap(&store, &config.bootstrap_models, &config.bootstrap_owner)?;
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
@@ -2493,6 +2499,89 @@ fn seed(store: &Store) -> magpie::Result<()> {
 		"Example only. Tool was not approved yet.",
 		json!({"hits": []}),
 	))?;
+	Ok(())
+}
+
+/// Record the deployment's models once. Later portal edits are kept.
+fn bootstrap(store: &Store, models: &[(String, String)], owner: &str) -> magpie::Result<()> {
+	let now = Utc::now();
+	let expires = (now + chrono::Duration::days(90))
+		.format("%Y-%m-%d")
+		.to_string();
+	let owner = if owner.is_empty() {
+		"Deployment owner"
+	} else {
+		owner
+	};
+	for (name, region) in models {
+		let put = |kind: &str, id: &str, body: Value| -> magpie::Result<()> {
+			if store.get_document(kind, id)?.is_some() {
+				return Ok(());
+			}
+			store.put_document(&Document {
+				kind: kind.into(),
+				id: id.into(),
+				body,
+				revision: 1,
+				updated_at: now.to_rfc3339(),
+				updated_by: "deployment".into(),
+				active: true,
+			})
+		};
+		put(
+			"provider",
+			name,
+			json!({"name": name, "region": region, "kind": "model"}),
+		)?;
+		let id = format!("approval-model-{name}");
+		if store.get_document("approval", &id)?.is_some() {
+			continue;
+		}
+		let approval = Approval {
+			id: id.clone(),
+			kind: ItemKind::Model,
+			name: name.clone(),
+			business_owner: owner.into(),
+			purpose: "Approved in the deployment settings for the gateway rollout. Review before expiry."
+				.into(),
+			classification: "OFFICIAL".into(),
+			expires_on: expires.clone(),
+			status: ApprovalStatus::Approved,
+			use_case: UseCase {
+				name: "AI coding assistants through Magpie Gateway".into(),
+				reference: "MAGPIE-UC-001".into(),
+				description: "Developers use coding agents through the gateway.".into(),
+				technology: "Generative AI".into(),
+				lifecycle: "Pilot".into(),
+				technical_standard: "partially applied".into(),
+				domains: "Corporate and shared services".into(),
+				usage_patterns: "Internal productivity".into(),
+				owner_name: owner.into(),
+				owner_email: if owner.contains('@') {
+					owner.into()
+				} else {
+					"owner@invalid".into()
+				},
+				criteria: String::new(),
+				inherent_risk: String::new(),
+				residual_risk: String::new(),
+				impact_assessment_date: String::new(),
+				last_review: now.format("%Y-%m-%d").to_string(),
+				next_review: expires.clone(),
+			},
+		};
+		put("approval", &id, serde_json::to_value(&approval)?)?;
+		store.append_audit(&AuditEvent::new(
+			"approval",
+			"deployment",
+			"",
+			"",
+			name,
+			"allow",
+			&format!("Model approved from deployment settings until {expires}, region {region}."),
+			json!({}),
+		))?;
+	}
 	Ok(())
 }
 

@@ -222,43 +222,42 @@ pub struct ResponseWebhook {
 	pub body: ResponseWebhookBody,
 }
 
+/// Reply to the proxy's LLM guardrail webhook.
+///
+/// On the request side a redact, mask or tokenise decision is returned as a
+/// block. The proxy's mask action rebuilds the request from plain text
+/// messages, which drops tool calls, tool results and cache markers, and
+/// coding agents such as Claude Code and Codex stop working. Sending the
+/// unredacted request is not an option either.
 pub fn webhook_response(
 	outcome: &Outcome,
-	messages: &[WebhookMessage],
+	_messages: &[WebhookMessage],
 	response_side: bool,
 ) -> Value {
-	match outcome.action {
-		Action::Block | Action::RequireApproval => json!({
+	let block = |message: String| {
+		json!({
 			"action": {
-				"body": outcome.reason,
+				"body": message,
 				"status_code": 403,
 				"reason": outcome.reason
 			}
-		}),
-		Action::Redact | Action::Mask | Action::Tokenise => {
-			if response_side {
-				json!({
-					"action": {
-						"body": { "choices": [{ "message": { "role": "assistant", "content": outcome.output } }] },
-						"reason": outcome.reason
-					}
-				})
-			} else {
-				let mut rewritten: Vec<Value> = messages
-					.iter()
-					.map(|message| json!({"role": message.role, "content": message.content}))
-					.collect();
-				if let Some(last) = rewritten.last_mut() {
-					last["content"] = json!(outcome.output);
-				}
-				json!({
-					"action": {
-						"body": { "messages": rewritten },
-						"reason": outcome.reason
-					}
-				})
+		})
+	};
+	match outcome.action {
+		Action::Block | Action::RequireApproval => block(format!(
+			"Magpie Gateway blocked this request. {}",
+			outcome.reason
+		)),
+		Action::Redact | Action::Mask | Action::Tokenise if !response_side => block(format!(
+			"Magpie Gateway blocked this request because it contains information that policy says must not leave the organisation. {} Remove it and start a new conversation, because earlier messages are sent again with each request.",
+			outcome.reason
+		)),
+		Action::Redact | Action::Mask | Action::Tokenise => json!({
+			"action": {
+				"body": { "choices": [{ "message": { "role": "assistant", "content": outcome.output } }] },
+				"reason": outcome.reason
 			}
-		},
+		}),
 		Action::Allow | Action::Log => json!({
 			"action": { "reason": outcome.reason }
 		}),
@@ -408,7 +407,7 @@ mod tests {
 	}
 
 	#[test]
-	fn webhook_mask_shape_matches_the_proxy() {
+	fn webhook_blocks_a_prompt_that_needs_redaction() {
 		let metadata = BTreeMap::new();
 		let approvals = vec![approval(ItemKind::Model, "example-au")];
 		let kill = KillSwitch::default();
@@ -434,13 +433,18 @@ mod tests {
 		let mut input = inspect(text, None, &metadata);
 		input.text = "ABN 12 000 000 041";
 		let outcome = decide(&input, &policy);
+		assert_eq!(outcome.action, Action::Redact);
 		let body = webhook_response(&outcome, &messages, false);
+		assert_eq!(body["action"]["status_code"], 403);
+		let text = body["action"]["body"].as_str().unwrap();
+		assert!(text.contains("new conversation"), "{text}");
+		assert!(!text.contains("000 000 041"), "{text}");
+		let reply = webhook_response(&outcome, &messages, true);
 		assert!(
-			body["action"]["body"]["messages"][0]["content"]
+			reply["action"]["body"]["choices"][0]["message"]["content"]
 				.as_str()
 				.unwrap()
 				.contains("[redacted]")
 		);
-		assert!(body["action"].get("status_code").is_none());
 	}
 }

@@ -29,6 +29,8 @@ fn config(break_glass: BreakGlassConfig, secure: bool) -> Config {
 		public_url: String::new(),
 		role_map: Default::default(),
 		webhook_token: String::new(),
+		bootstrap_models: vec![],
+		bootstrap_owner: String::new(),
 		hmac_secret: "test-secret".into(),
 		session_secret: "test-secret".into(),
 		scim_token: "example-token".into(),
@@ -294,7 +296,7 @@ async fn approver_cannot_approve_their_own_request() {
 }
 
 #[tokio::test]
-async fn dlp_webhook_redacts_an_example_abn() {
+async fn dlp_webhook_blocks_a_prompt_with_an_example_abn() {
 	let base = spawn(false).await;
 	let (client, _) = client(&base);
 	let response = client
@@ -309,10 +311,11 @@ async fn dlp_webhook_redacts_an_example_abn() {
 		.await
 		.expect("webhook");
 	assert_eq!(response.status(), StatusCode::OK);
-	let body = response.text().await.expect("body");
-	assert!(body.contains("[redacted]"), "{body}");
-	assert!(!body.contains("12 000 000 041"), "{body}");
-	assert!(!body.contains("12000000041"), "{body}");
+	let body: serde_json::Value = response.json().await.expect("body");
+	assert_eq!(body["action"]["status_code"], 403, "{body}");
+	let text = body.to_string();
+	assert!(!text.contains("12 000 000 041"), "{text}");
+	assert!(!text.contains("12000000041"), "{text}");
 }
 
 #[tokio::test]
