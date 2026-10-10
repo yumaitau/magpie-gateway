@@ -1,0 +1,26 @@
+Magpie Gateway
+Copyright 2026 Yuma IT
+
+This product includes software from the agentgateway project
+(https://github.com/agentgateway/agentgateway), licensed under the
+Apache License, Version 2.0. The upstream work is included with its
+history. agentgateway names and marks, and Linux Foundation names and
+marks, belong to their respective owners. Magpie Gateway is not
+endorsed by, and is not a product of, those projects.
+
+The CEL implementation under crates/cel-fork is derived from cel-rust
+and is licensed under the MIT License. See that crate's Cargo.toml.
+
+Yuma IT changes, kept outside the proxy core so they can be merged
+forward, are:
+
+- docs/plan.md, docs/upstream-sync.md and the compliance documents
+- the magpie/ workspace (policy engine, portal, tests)
+- deploy/ (Helm, Compose, Terraform examples)
+- detections/ (KQL and SQL content for Magpie audit events)
+- .github/workflows/magpie.yml and .github/workflows/upstream-sync.yml
+- this NOTICE file
+- a fork notice at the top of README.md
+
+No upstream source file under crates/, controller/ or ui/ is modified
+by the Magpie product commits. See docs/upstream-sync.md.
