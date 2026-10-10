@@ -10,6 +10,9 @@ allowVolumeExpansion: true
 parameters:
   type: gp3
   encrypted: "true"
+  {{- with .Values.storageClass.kmsKeyId }}
+  kmsKeyId: {{ . | quote }}
+  {{- end }}
 ---
 {{- end }}
 apiVersion: v1

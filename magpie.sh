@@ -10,6 +10,8 @@
 #   ./magpie.sh uitest <client>           browser test of the live portal
 #   ./magpie.sh report <client>           download the audit log and register
 #   ./magpie.sh kubectl <client> <args>   kubectl in the magpie namespace
+#   ./magpie.sh use <client> [person]     point this machine's coding agents at the gateway
+#   ./magpie.sh unuse                     undo use
 #   ./magpie.sh down <client>             destroy everything
 #
 # Everything for one client lives in engagements/<client>/. That folder holds
@@ -127,7 +129,7 @@ cmd_new() {
 	step "Magpie Gateway for $CLIENT"
 	say "A few questions. Every answer can be changed later in $DIR/magpie.conf."
 
-	local cloud aws_profile cluster="" auto_mode=false storage_class="" owner bedrock="" azure_resource="" azure_models="" azure_region="" azure_key="" names
+	local cloud aws_profile cluster="" auto_mode=false lb_subnets="" storage_class="" owner bedrock="" azure_resource="" azure_models="" azure_region="" azure_key="" names
 	ask cloud "Cloud to deploy into (aws)" aws
 	[[ $cloud == aws ]] || die "Only aws is ready. Azure Container Apps is next."
 	ask aws_profile "AWS CLI profile for the client's account" "${AWS_PROFILE:-default}"
@@ -139,7 +141,7 @@ cmd_new() {
 	if [[ -n $cluster ]]; then
 		local found
 		found="$(AWS_PROFILE="$aws_profile" inspect_cluster "$cluster")" || exit 1
-		read -r auto_mode storage_class <<<"$found"
+		read -r auto_mode lb_subnets storage_class <<<"$found"
 	fi
 	ask owner "Business owner email at the client (recorded on model approvals)"
 
@@ -181,6 +183,8 @@ AWS_REGION=ap-southeast-2
 # Empty creates an EKS Auto Mode cluster. Otherwise Magpie installs into this one.
 EKS_CLUSTER=$(printf '%q' "$cluster")
 EKS_AUTO_MODE=$auto_mode
+# Private subnets for the internal load balancer, comma separated. Empty uses the created ones.
+EKS_LB_SUBNETS=$(printf '%q' "$lb_subnets")
 # Storage class for the portal volume on a cluster without Auto Mode. Empty uses the default.
 EKS_STORAGE_CLASS=$(printf '%q' "$storage_class")
 OWNER_EMAIL=$(printf '%q' "$owner")
@@ -216,17 +220,37 @@ EOF
 	say "Next: ./magpie.sh up $CLIENT"
 }
 
-# Prints "<auto mode true|false> <storage class>" and stops when the cluster
-# lacks what the chart needs.
+# Subnets in a VPC whose default route does not go to an internet gateway.
+# CloudFront VPC origins need the load balancer in private subnets.
+private_subnets() { # private_subnets VPC_ID
+	local tables
+	tables="$(aws ec2 describe-route-tables --region ap-southeast-2 --filters "Name=vpc-id,Values=$1" --output json)"
+	aws ec2 describe-subnets --region ap-southeast-2 --filters "Name=vpc-id,Values=$1" --output json |
+		jq -r --argjson tables "$tables" '
+			($tables.RouteTables | map(select(any(.Associations[]?; .Main == true))) | first) as $main
+			| [.Subnets[]
+				| .SubnetId as $id
+				| (($tables.RouteTables | map(select(any(.Associations[]?; .SubnetId == $id))) | first) // $main) as $table
+				| select(any($table.Routes[]?; .DestinationCidrBlock == "0.0.0.0/0" and ((.GatewayId // "") | startswith("igw-"))) | not)
+				| $id] | join(",")'
+}
+
+# Prints "<auto mode true|false> <load balancer subnets> <storage class>" and
+# stops when the cluster lacks what the chart needs.
 inspect_cluster() {
-	local name="$1" auto class
-	need aws
+	local name="$1" auto vpc subnets class=""
+	need aws jq
 	auto="$(aws eks describe-cluster --region ap-southeast-2 --name "$name" \
 		--query 'cluster.computeConfig.enabled' --output text 2>/dev/null)" ||
 		die "Cannot read EKS cluster $name in ap-southeast-2 with this profile."
+	vpc="$(aws eks describe-cluster --region ap-southeast-2 --name "$name" --query 'cluster.resourcesVpcConfig.vpcId' --output text)"
+	subnets="$(private_subnets "$vpc")"
+	[[ $(tr ',' '\n' <<<"$subnets" | grep -c .) -ge 2 ]] ||
+		die "VPC $vpc needs at least two private subnets for the internal load balancer."
+	say "Load balancer goes in private subnets $subnets." >&2
 	if [[ $auto == True ]]; then
 		say "$name runs EKS Auto Mode. Nothing else is needed." >&2
-		printf 'true \n'
+		printf 'true %s \n' "$subnets"
 		return
 	fi
 	aws eks describe-addon --region ap-southeast-2 --cluster-name "$name" --addon-name eks-pod-identity-agent >/dev/null 2>&1 ||
@@ -234,7 +258,7 @@ inspect_cluster() {
 	say "$name is not in Auto Mode. It needs the AWS Load Balancer Controller (for TargetGroupBinding)" >&2
 	say "and a storage class backed by the EBS CSI driver." >&2
 	read -r -p "Storage class for the portal volume (blank uses the cluster default): " class
-	printf 'false %s\n' "$class"
+	printf 'false %s %s\n' "$subnets" "$class"
 }
 
 # Gateway name for a Bedrock ID: au.anthropic.claude-sonnet-4-5-20250929-v1:0 -> claude-sonnet-4-5
@@ -402,6 +426,7 @@ module "magpie" {
   existing_cluster_name                = var.existing_cluster_name
   existing_cluster_auto_mode           = var.existing_cluster_auto_mode
   existing_cluster_storage_class       = var.existing_cluster_storage_class
+  load_balancer_subnet_ids             = var.load_balancer_subnet_ids
   cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
   chart_path                           = "$ROOT/deploy/helm/magpie-gateway"
 }
@@ -415,6 +440,7 @@ variable "portal_environment" { type = map(string) }
 variable "existing_cluster_name" { type = string }
 variable "existing_cluster_auto_mode" { type = bool }
 variable "existing_cluster_storage_class" { type = string }
+variable "load_balancer_subnet_ids" { type = list(string) }
 variable "cluster_endpoint_public_access_cidrs" { type = list(string) }
 variable "secrets" {
   type      = map(string)
@@ -440,6 +466,7 @@ EOF
 			--arg cluster "${EKS_CLUSTER:-}" \
 			--argjson auto_mode "${EKS_AUTO_MODE:-false}" \
 			--arg storage_class "${EKS_STORAGE_CLASS:-}" \
+			--arg lb_subnets "${EKS_LB_SUBNETS:-}" \
 			--arg operator "$operator/32" \
 			--arg portal_image "$(pin_image "$PORTAL_IMAGE")" \
 			--arg proxy_image "$(pin_image "$PROXY_IMAGE")" \
@@ -458,6 +485,7 @@ EOF
 				existing_cluster_name: $cluster,
 				existing_cluster_auto_mode: $auto_mode,
 				existing_cluster_storage_class: $storage_class,
+				load_balancer_subnet_ids: ($lb_subnets | split(",") | map(select(. != ""))),
 				cluster_endpoint_public_access_cidrs: [$operator],
 				portal_image: $portal_image, proxy_image: $proxy_image,
 				proxy_config: $proxy_config,
@@ -804,6 +832,164 @@ cmd_kubectl() {
 	kubectl --kubeconfig "$DIR/kubeconfig" --namespace magpie "$@"
 }
 
+# ---------------------------------------------------------------- use / unuse
+
+# Point the coding agents on this machine at a deployed gateway: Claude Code,
+# Codex, opencode and Copilot in VS Code. The key is stored once in
+# ~/.config/magpie/<client>.key and each tool reads it from there. Every file
+# is backed up once to <file>.before-magpie, and unuse removes only what use
+# added.
+MAGPIE_HOME="${MAGPIE_HOME:-$HOME/.config/magpie}"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
+OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+VSCODE_MODELS="$HOME/Library/Application Support/Code/User/chatLanguageModels.json"
+
+backup_once() {
+	[[ -f $1 && ! -e "$1.before-magpie" ]] && cp -p "$1" "$1.before-magpie"
+	return 0
+}
+
+json_edit() { # json_edit FILE JQ_ARGS...
+	local file="$1" tmp
+	shift
+	[[ -f $file ]] || printf '{}\n' >"$file"
+	tmp="$(mktemp)"
+	jq "$@" "$file" >"$tmp" && cat "$tmp" >"$file"
+	rm -f "$tmp"
+}
+
+codex_strip() { # remove our blocks and restore the lines use commented out
+	[[ -f $CODEX_CONFIG ]] || return 0
+	local tmp
+	tmp="$(mktemp)"
+	awk '
+		/^# >>> magpie/ { skip = 1; next }
+		/^# <<< magpie/ { skip = 0; next }
+		skip { next }
+		/^# magpie-was: / { sub(/^# magpie-was: /, ""); print; next }
+		{ print }
+	' "$CODEX_CONFIG" >"$tmp" && cat "$tmp" >"$CODEX_CONFIG"
+	rm -f "$tmp"
+}
+
+cmd_use() {
+	load "${1:-}"
+	local person="${2:-$(first_person)}"
+	[[ -e "$DIR/keys/$person.key" ]] || die "Usage: ./magpie.sh use $CLIENT <person>. People: $(people | tr '\n' ' ')"
+	need jq curl
+	local base keyfile opus sonnet haiku
+	base="$(url)"
+	curl -fs -o /dev/null "$base/healthz" || die "$base is not answering. Fix the gateway before pointing agents at it."
+	opus="$(first_model 'claude-opus*')"
+	sonnet="$(first_model 'claude-sonnet*')"
+	haiku="$(first_model 'claude-haiku*')"
+	[[ -n $sonnet ]] || die "use needs a claude-sonnet model on the gateway."
+	mkdir -p "$MAGPIE_HOME"
+	chmod 700 "$MAGPIE_HOME"
+	keyfile="$MAGPIE_HOME/$CLIENT.key"
+	(umask 077 && cp "$DIR/keys/$person.key" "$keyfile")
+
+	step "Claude Code ($CLAUDE_SETTINGS)"
+	mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+	backup_once "$CLAUDE_SETTINGS"
+	json_edit "$CLAUDE_SETTINGS" --arg base "$base" --arg helper "cat '$keyfile'" --arg client "$CLIENT" \
+		--arg opus "$opus" --arg sonnet "$sonnet" --arg haiku "$haiku" '
+		.env = ((.env // {}) + {ANTHROPIC_BASE_URL: $base, MAGPIE_GATEWAY: $client}
+			+ (if $opus != "" then {ANTHROPIC_DEFAULT_OPUS_MODEL: $opus} else {} end)
+			+ {ANTHROPIC_DEFAULT_SONNET_MODEL: $sonnet}
+			+ (if $haiku != "" then {ANTHROPIC_DEFAULT_HAIKU_MODEL: $haiku} else {} end))
+		| .apiKeyHelper = $helper'
+	say "  base URL $base, key from $keyfile"
+
+	if [[ -f $CODEX_CONFIG ]] || command -v codex >/dev/null 2>&1; then
+		step "Codex ($CODEX_CONFIG)"
+		mkdir -p "$(dirname "$CODEX_CONFIG")"
+		touch "$CODEX_CONFIG"
+		backup_once "$CODEX_CONFIG"
+		codex_strip
+		local tmp
+		tmp="$(mktemp)"
+		{
+			printf '# >>> magpie (./magpie.sh unuse removes this block)\nmodel = "%s"\nmodel_provider = "magpie"\n# <<< magpie\n' "$sonnet"
+			# Top-level model keys must come before any table, so the old ones are parked.
+			awk 'BEGIN { top = 1 }
+				/^\[/ { top = 0 }
+				top && /^(model|model_provider)[[:space:]]*=/ { print "# magpie-was: " $0; next }
+				{ print }' "$CODEX_CONFIG"
+			printf '# >>> magpie providers\n[model_providers.magpie]\nname = "Magpie Gateway (%s)"\nbase_url = "%s/v1"\nwire_api = "responses"\n\n[model_providers.magpie.auth]\ncommand = "cat"\nargs = ["%s"]\n# <<< magpie providers\n' \
+				"$CLIENT" "$base" "$keyfile"
+		} >"$tmp" && cat "$tmp" >"$CODEX_CONFIG"
+		rm -f "$tmp"
+		say "  model $sonnet through provider magpie"
+	fi
+
+	if [[ -d $(dirname "$OPENCODE_CONFIG") ]] || command -v opencode >/dev/null 2>&1; then
+		step "opencode ($OPENCODE_CONFIG)"
+		mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+		backup_once "$OPENCODE_CONFIG"
+		local models
+		models="$(jq -n --arg o "$opus" --arg s "$sonnet" --arg h "$haiku" \
+			'[$o, $s, $h] | map(select(. != "")) | map({key: ., value: {name: ("Magpie " + .)}}) | from_entries')"
+		json_edit "$OPENCODE_CONFIG" --arg base "$base/v1" --arg key "{file:$keyfile}" --arg model "magpie/$sonnet" \
+			--argjson models "$models" --arg client "$CLIENT" '
+			.provider = ((.provider // {}) + {magpie: {
+				npm: "@ai-sdk/anthropic", name: ("Magpie Gateway (" + $client + ")"),
+				options: {baseURL: $base, apiKey: $key}, models: $models}})
+			| .model = $model'
+		say "  model magpie/$sonnet"
+	fi
+
+	if [[ -d $(dirname "$VSCODE_MODELS") ]]; then
+		step "Copilot in VS Code ($VSCODE_MODELS)"
+		backup_once "$VSCODE_MODELS"
+		[[ -f $VSCODE_MODELS ]] || printf '[]\n' >"$VSCODE_MODELS"
+		local entries
+		entries="$(jq -n --arg base "$base" --arg o "$opus" --arg s "$sonnet" --arg h "$haiku" '
+			[$o, $s, $h] | map(select(. != "")) | map({id: ., name: ("Magpie " + .), url: ($base + "/v1/messages"),
+				toolCalling: true, vision: true, maxInputTokens: 200000, maxOutputTokens: 32000})')"
+		local tmp
+		tmp="$(mktemp)"
+		jq --argjson models "$entries" '
+			map(select((.name // "") | startswith("Magpie Gateway") | not))
+			+ [{name: "Magpie Gateway", vendor: "customendpoint", apiType: "messages",
+				apiKey: "${input:magpieKey}", models: $models}]' "$VSCODE_MODELS" >"$tmp" && cat "$tmp" >"$VSCODE_MODELS"
+		rm -f "$tmp"
+		say "  VS Code asks for the key once: paste the contents of $keyfile"
+		say "  Inline completions still go to GitHub; chat and agent mode can pick the Magpie models."
+	fi
+
+	step "Done"
+	say "New sessions use the gateway. Sessions already running keep their old settings."
+	say "Undo with: ./magpie.sh unuse"
+}
+
+cmd_unuse() {
+	need jq
+	if [[ -f $CLAUDE_SETTINGS ]]; then
+		json_edit "$CLAUDE_SETTINGS" '
+			if (.env.MAGPIE_GATEWAY // "") != "" then
+				.env |= del(.ANTHROPIC_BASE_URL, .ANTHROPIC_DEFAULT_OPUS_MODEL, .ANTHROPIC_DEFAULT_SONNET_MODEL,
+					.ANTHROPIC_DEFAULT_HAIKU_MODEL, .MAGPIE_GATEWAY)
+				| if (.apiKeyHelper // "") | test("\\.config/magpie/") then del(.apiKeyHelper) else . end
+			else . end'
+		say "Claude Code: gateway settings removed."
+	fi
+	codex_strip && [[ -f $CODEX_CONFIG ]] && say "Codex: gateway provider removed, previous model restored."
+	if [[ -f $OPENCODE_CONFIG ]]; then
+		json_edit "$OPENCODE_CONFIG" '
+			(if (.model // "") | startswith("magpie/") then del(.model) else . end)
+			| if .provider then .provider |= del(.magpie) else . end
+			| if .provider == {} then del(.provider) else . end'
+		say "opencode: gateway provider removed."
+	fi
+	if [[ -f $VSCODE_MODELS ]]; then
+		json_edit "$VSCODE_MODELS" 'map(select((.name // "") | startswith("Magpie Gateway") | not))'
+		say "Copilot in VS Code: Magpie models removed."
+	fi
+	say "Backups from the first use are kept as <file>.before-magpie."
+}
+
 # ---------------------------------------------------------------- report
 
 cmd_report() {
@@ -830,7 +1016,7 @@ cmd_report() {
 # ---------------------------------------------------------------- main
 
 usage() {
-	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -848,6 +1034,8 @@ main() {
 	uitest) cmd_uitest "$@" ;;
 	report) cmd_report "$@" ;;
 	kubectl) cmd_kubectl "$@" ;;
+	use) cmd_use "$@" ;;
+	unuse) cmd_unuse ;;
 	render) # for tests: print the proxy config
 		load "${1:-}"
 		render_proxy

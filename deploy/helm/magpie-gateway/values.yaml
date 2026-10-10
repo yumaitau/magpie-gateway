@@ -43,6 +43,10 @@ storageClass:
   create: false
   name: magpie-gp3
   provisioner: ebs.csi.eks.amazonaws.com
+  # KMS key for the volume. Set it when the account encrypts EBS by default
+  # with a customer key the cluster role cannot use; volumes are otherwise
+  # created and then deleted. Empty uses the account default.
+  kmsKeyId: ""
 
 serviceAccount:
   name: magpie
@@ -64,6 +68,14 @@ presidio:
   # Community images, uid 1001, port 3000. Pin a digest before production.
   analyzerRepository: ghcr.io/data-privacy-stack/presidio-analyzer
   analyzerTag: latest
+
+# The portal image is built for amd64 only. Without this, a cluster with
+# Graviton nodes (EKS Auto Mode picks them freely) can schedule the pod on
+# arm64 and the portal fails with "exec format error".
+nodeSelector:
+  kubernetes.io/arch: amd64
+
+tolerations: []
 
 podSecurityContext:
   runAsNonRoot: true

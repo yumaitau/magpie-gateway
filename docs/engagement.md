@@ -110,6 +110,21 @@ Fable models have no AU inference profile and are not offered.
 
 ## Things to know
 
+- If the account encrypts EBS by default with a customer KMS key, the
+  chart's storage class uses the AWS managed `aws/ebs` key instead,
+  because the Auto Mode cluster role usually cannot use the customer
+  key and every volume would be created and then deleted. Set
+  `ebs_kms_key_arn` to a key the cluster role can use if policy needs a
+  customer key.
+- The portal image is amd64 only, so the pod is pinned to amd64 nodes.
+  Auto Mode clusters with Graviton node pools would otherwise schedule
+  it on arm64.
+- A failed install rolls itself back, so `up` can simply be run again.
+- `./magpie.sh use <client> [person]` points this machine's Claude Code,
+  Codex, opencode and Copilot in VS Code at the gateway; `unuse` undoes
+  it. The key lives in `~/.config/magpie/<client>.key` and each tool
+  reads it from there.
+
 - `up` and `down` show the Terraform plan and ask. Set
   `MAGPIE_AUTO_APPROVE=1` to skip that in a script.
 

@@ -31,6 +31,12 @@ variable "existing_cluster_storage_class" {
   default     = ""
 }
 
+variable "ebs_kms_key_arn" {
+  description = "KMS key for the portal volume when the chart creates the storage class. Empty uses the AWS managed aws/ebs key, which the EKS Auto Mode role can use even when the account's default EBS key is a customer key it cannot."
+  type        = string
+  default     = ""
+}
+
 variable "load_balancer_subnet_ids" {
   description = "Private subnets for the internal load balancer. Empty uses the created private subnets, or the existing cluster's subnets."
   type        = list(string)
