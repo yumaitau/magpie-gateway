@@ -54,6 +54,9 @@ pub struct Config {
 	/// Models the deployment routes to, as (name, region). Each gets a provider
 	/// record and an approval on first start, so day-one traffic is not denied.
 	pub bootstrap_models: Vec<(String, String)>,
+	/// Destinations allowed for PROTECTED and above. The settings form does not
+	/// edit this list, so the deployment supplies it.
+	pub bootstrap_protected: Vec<String>,
 	/// Business owner recorded on those approvals.
 	pub bootstrap_owner: String,
 	pub hmac_secret: String,
@@ -122,7 +125,12 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 	if config.seed_examples {
 		seed(&store)?;
 	}
-	bootstrap(&store, &config.bootstrap_models, &config.bootstrap_owner)?;
+	bootstrap(
+		&store,
+		&config.bootstrap_models,
+		&config.bootstrap_owner,
+		&config.bootstrap_protected,
+	)?;
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
@@ -2505,7 +2513,14 @@ fn seed(store: &Store) -> magpie::Result<()> {
 }
 
 /// Record the deployment's models once. Later portal edits are kept.
-fn bootstrap(store: &Store, models: &[(String, String)], owner: &str) -> magpie::Result<()> {
+/// PROTECTED destinations are merged on every start, because a database
+/// created before that list existed would otherwise keep blocking them.
+fn bootstrap(
+	store: &Store,
+	models: &[(String, String)],
+	owner: &str,
+	protected: &[String],
+) -> magpie::Result<()> {
 	let now = Utc::now();
 	let expires = (now + chrono::Duration::days(90))
 		.format("%Y-%m-%d")
@@ -2584,7 +2599,55 @@ fn bootstrap(store: &Store, models: &[(String, String)], owner: &str) -> magpie:
 			json!({}),
 		))?;
 	}
+	merge_protected(store, protected)?;
 	Ok(())
+}
+
+fn merge_protected(store: &Store, protected: &[String]) -> magpie::Result<()> {
+	if protected.is_empty() {
+		return Ok(());
+	}
+	let existing = store.get_document("settings", "global")?;
+	let mut body = existing
+		.as_ref()
+		.map(|doc| doc.body.clone())
+		.unwrap_or_else(|| {
+			json!({
+				"sovereignMode": true,
+				"telemetryEnabled": false,
+				"presidioAnalyzerUrl": "",
+				"capturePayloads": false,
+				"retentionDays": 365,
+				"requireApproval": true
+			})
+		});
+	let mut list = body
+		.get("approvedProtected")
+		.and_then(|value| value.as_array())
+		.cloned()
+		.unwrap_or_default();
+	let mut changed = existing.is_none() || body.get("approvedProtected").is_none();
+	for name in protected {
+		if name.is_empty() || list.iter().any(|item| item.as_str() == Some(name)) {
+			continue;
+		}
+		list.push(json!(name));
+		changed = true;
+	}
+	if !changed {
+		return Ok(());
+	}
+	body["approvedProtected"] = json!(list);
+	let revision = existing.as_ref().map(|doc| doc.revision + 1).unwrap_or(1);
+	store.put_document(&Document {
+		kind: "settings".into(),
+		id: "global".into(),
+		body,
+		revision,
+		updated_at: Utc::now().to_rfc3339(),
+		updated_by: "deployment".into(),
+		active: true,
+	})
 }
 
 fn placeholder_approval(id: &str) -> Approval {
@@ -2814,4 +2877,47 @@ struct CallbackQuery {
 	state: Option<String>,
 	error: Option<String>,
 	error_description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn bootstrap_allows_deployment_models_for_protected_traffic() {
+		let store = Store::open_memory().unwrap();
+		let destination = "bedrock:au.anthropic.claude-opus-4-6-v1";
+		bootstrap(
+			&store,
+			&[("claude-opus-4-6".into(), "ap-southeast-2".into())],
+			"owner@example.com",
+			&[destination.into()],
+		)
+		.unwrap();
+		let doc = store.get_document("settings", "global").unwrap().unwrap();
+		let list = doc.body["approvedProtected"].as_array().unwrap();
+		assert_eq!(list.len(), 1);
+		assert_eq!(list[0], destination);
+		assert!(
+			store
+				.get_document("approval", "approval-model-claude-opus-4-6")
+				.unwrap()
+				.is_some()
+		);
+
+		bootstrap(
+			&store,
+			&[("claude-opus-4-6".into(), "ap-southeast-2".into())],
+			"owner@example.com",
+			&[
+				destination.into(),
+				"bedrock:au.anthropic.claude-sonnet-4-6".into(),
+			],
+		)
+		.unwrap();
+		let doc = store.get_document("settings", "global").unwrap().unwrap();
+		let list = doc.body["approvedProtected"].as_array().unwrap();
+		assert_eq!(list.len(), 2);
+		assert_eq!(doc.revision, 2);
+	}
 }

@@ -126,6 +126,7 @@ fn portal_config(issuer: String, webhook_token: &str) -> Config {
 		role_map,
 		webhook_token: webhook_token.into(),
 		bootstrap_models: vec![("claude-sonnet-5-5".into(), "ap-southeast-2".into())],
+		bootstrap_protected: vec!["bedrock:au.anthropic.claude-sonnet-5-5".into()],
 		bootstrap_owner: "jordan.lee@example.com.au".into(),
 		hmac_secret: "test-secret".into(),
 		session_secret: "test-secret".into(),

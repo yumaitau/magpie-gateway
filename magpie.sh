@@ -386,6 +386,20 @@ bootstrap_models() {
 	printf '%s' "${out%,}"
 }
 
+# Destination strings the guardrail compares for PROTECTED and above.
+approved_protected() {
+	local pair out=""
+	IFS=',' read -r -a pairs <<<"${BEDROCK_MODELS:-}"
+	for pair in ${pairs[@]+"${pairs[@]}"}; do
+		[[ -n $pair ]] && out+="bedrock:${pair#*=},"
+	done
+	IFS=',' read -r -a pairs <<<"${AZURE_OPENAI_MODELS:-}"
+	for pair in ${pairs[@]+"${pairs[@]}"}; do
+		[[ -n $pair && -n ${AZURE_OPENAI_RESOURCE:-} ]] && out+="azure-openai:${AZURE_OPENAI_RESOURCE}/${pair#*=},"
+	done
+	printf '%s' "${out%,}"
+}
+
 # ghcr.io/owner/name:tag -> ghcr.io/owner/name@sha256:..., so each up deploys
 # an exact image and a new :main build actually rolls out. Other registries,
 # and images already pinned, are left alone.
@@ -472,6 +486,7 @@ EOF
 			--arg proxy_image "$(pin_image "$PROXY_IMAGE")" \
 			--rawfile proxy_config "$DIR/agentgateway.yaml" \
 			--arg models "$(bootstrap_models)" \
+			--arg protected "$(approved_protected)" \
 			--arg owner "$OWNER_EMAIL" \
 			--arg tenant "${ENTRA_TENANT_ID:-}" \
 			--arg client_id "${ENTRA_CLIENT_ID:-}" \
@@ -491,7 +506,8 @@ EOF
 				proxy_config: $proxy_config,
 				portal_environment: ({
 					MAGPIE_BOOTSTRAP_MODELS: $models,
-					MAGPIE_BOOTSTRAP_OWNER: $owner
+					MAGPIE_BOOTSTRAP_OWNER: $owner,
+					MAGPIE_APPROVED_PROTECTED: $protected
 				} + (if $client_id != "" then {
 					MAGPIE_ENTRA_TENANT_ID: $tenant,
 					MAGPIE_OIDC_CLIENT_ID: $client_id,

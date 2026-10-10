@@ -90,6 +90,12 @@ async fn main() {
 			})
 			.filter(|(name, _)| !name.is_empty())
 			.collect(),
+		bootstrap_protected: env("MAGPIE_APPROVED_PROTECTED")
+			.unwrap_or_default()
+			.split(',')
+			.map(|item| item.trim().to_string())
+			.filter(|item| !item.is_empty())
+			.collect(),
 		bootstrap_owner: env("MAGPIE_BOOTSTRAP_OWNER").unwrap_or_default(),
 		hmac_secret: secret.clone(),
 		session_secret: secret,

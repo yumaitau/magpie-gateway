@@ -30,6 +30,7 @@ fn config(break_glass: BreakGlassConfig, secure: bool) -> Config {
 		role_map: Default::default(),
 		webhook_token: String::new(),
 		bootstrap_models: vec![],
+		bootstrap_protected: vec![],
 		bootstrap_owner: String::new(),
 		hmac_secret: "test-secret".into(),
 		session_secret: "test-secret".into(),
