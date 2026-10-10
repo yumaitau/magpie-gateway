@@ -11,6 +11,7 @@ RUN cargo build --manifest-path magpie/Cargo.toml -p magpie-portal --release --l
 
 FROM debian:bookworm-slim
 RUN apt-get update \
+	&& apt-get upgrade -y --no-install-recommends \
 	&& apt-get install -y --no-install-recommends ca-certificates \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& useradd --uid 65532 --user-group --home-dir /data --shell /usr/sbin/nologin magpie \
