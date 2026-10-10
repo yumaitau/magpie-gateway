@@ -67,7 +67,13 @@ async fn main() {
 	let mut role_map = RoleMap::default();
 	role_map.extend_from(env);
 
+	let guardrail_mode = env("MAGPIE_GUARDRAIL_MODE")
+		.unwrap_or_else(|| "enforce".into())
+		.parse::<magpie::guardrail::Mode>()
+		.unwrap_or_else(|error| fail(&error.to_string()));
+	println!("Magpie guardrail mode: {}", guardrail_mode.as_str());
 	let config = magpie_portal::Config {
+		guardrail_mode,
 		database_path: database,
 		cookie_secure: env("MAGPIE_COOKIE_SECURE").as_deref() != Some("0"),
 		demo,

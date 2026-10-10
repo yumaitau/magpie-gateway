@@ -84,6 +84,11 @@ load() {
 	[[ -f "$DIR/magpie.conf" ]] || die "No engagement called $CLIENT. Run: ./magpie.sh new $CLIENT"
 	# shellcheck disable=SC1091
 	source "$DIR/magpie.conf"
+	GUARDRAIL_MODE="${GUARDRAIL_MODE:-enforce}"
+	case "$GUARDRAIL_MODE" in
+		enforce|log-only) ;;
+		*) die "GUARDRAIL_MODE must be enforce or log-only." ;;
+	esac
 	# shellcheck disable=SC1091
 	source "$DIR/secrets.env"
 }
@@ -197,6 +202,8 @@ AZURE_OPENAI_REGION=$(printf '%q' "$azure_region")
 # Filled in by ./magpie.sh sso
 ENTRA_TENANT_ID=
 ENTRA_CLIENT_ID=
+# Trial traffic is logged without blocking or rewriting. Change to enforce when ready.
+GUARDRAIL_MODE=log-only
 PORTAL_IMAGE=ghcr.io/yumaitau/magpie-gateway-portal:main
 PROXY_IMAGE=ghcr.io/agentgateway/agentgateway:v1.6.0
 EOF
@@ -488,6 +495,7 @@ EOF
 			--arg models "$(bootstrap_models)" \
 			--arg protected "$(approved_protected)" \
 			--arg owner "$OWNER_EMAIL" \
+			--arg guardrail_mode "$GUARDRAIL_MODE" \
 			--arg tenant "${ENTRA_TENANT_ID:-}" \
 			--arg client_id "${ENTRA_CLIENT_ID:-}" \
 			--arg session "$MAGPIE_SESSION_SECRET" \
@@ -505,6 +513,7 @@ EOF
 				portal_image: $portal_image, proxy_image: $proxy_image,
 				proxy_config: $proxy_config,
 				portal_environment: ({
+					MAGPIE_GUARDRAIL_MODE: $guardrail_mode,
 					MAGPIE_BOOTSTRAP_MODELS: $models,
 					MAGPIE_BOOTSTRAP_OWNER: $owner,
 					MAGPIE_APPROVED_PROTECTED: $protected
@@ -800,11 +809,15 @@ cmd_check() {
 		-d "{\"model\":\"$model\",\"max_output_tokens\":20,\"input\":\"Reply with the word ready.\"}")"
 	[[ ${body##*$'\n'} == 200 ]] && result "OpenAI Responses API (Codex)" ok || result "OpenAI Responses API (Codex)" fail "${body:0:300}"
 
-	# A synthetic ABN with a valid checksum. It must not reach the model.
+	# A synthetic ABN with a valid checksum tests the configured rollout mode.
 	body="$(curl -s -w '\n%{http_code}' "$base/v1/messages" \
 		-H "Authorization: Bearer $key" -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
 		-d "{\"model\":\"$model\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Example only. Our ABN is 12 000 000 041.\"}]}")"
-	[[ ${body##*$'\n'} == 400 && $body == *"Magpie Gateway blocked"* ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
+	if [[ $GUARDRAIL_MODE == log-only ]]; then
+		[[ ${body##*$'\n'} == 200 ]] && result "log-only allows an Australian identifier" ok || result "log-only allows an Australian identifier" fail "${body:0:300}"
+	else
+		[[ ${body##*$'\n'} == 400 && $body == *"Magpie Gateway blocked"* ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
+	fi
 
 	code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/guardrails/request")"
 	[[ $code == 404 ]] && result "portal guardrail routes are not public" ok || result "portal guardrail routes are not public" fail "HTTP $code"
@@ -827,7 +840,7 @@ cmd_uitest() {
 		cd "$ROOT/magpie/axe"
 		npm ci --silent
 		npx playwright install chromium >/dev/null
-		MAGPIE_LIVE_URL="$(url)" MAGPIE_ADMIN_PASSWORD="$MAGPIE_ADMIN_PASSWORD" \
+		MAGPIE_GUARDRAIL_MODE="$GUARDRAIL_MODE" MAGPIE_LIVE_URL="$(url)" MAGPIE_ADMIN_PASSWORD="$MAGPIE_ADMIN_PASSWORD" \
 			MAGPIE_KEY="$(<"$DIR/keys/$person.key")" MAGPIE_PERSON="$person" MAGPIE_MODEL="$model" \
 			npx playwright test live/ --reporter=list
 	)

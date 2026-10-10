@@ -8,6 +8,7 @@ portal:
   imagePullPolicy: IfNotPresent
   # Non-secret MAGPIE_* settings, for example MAGPIE_PUBLIC_URL,
   # MAGPIE_ENTRA_TENANT_ID, MAGPIE_OIDC_CLIENT_ID, MAGPIE_BOOTSTRAP_MODELS.
+  # Set MAGPIE_GUARDRAIL_MODE: log-only for a trial; default is enforce.
   environment: {}
   resources:
     requests: {cpu: 100m, memory: 128Mi}

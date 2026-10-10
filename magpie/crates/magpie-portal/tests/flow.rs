@@ -16,6 +16,7 @@ use serde_json::json;
 
 fn config(break_glass: BreakGlassConfig, secure: bool) -> Config {
 	Config {
+		guardrail_mode: Default::default(),
 		database_path: ":memory:".into(),
 		cookie_secure: secure,
 		demo: false,
@@ -672,4 +673,91 @@ async fn enabled_break_glass_login_is_audited() {
 		!html.contains("value=\"example-agent\""),
 		"kill switch not cleared"
 	);
+}
+
+#[tokio::test]
+async fn log_only_webhooks_pass_unchanged_audit_findings_and_keep_authentication() {
+	let mut config = config(BreakGlassConfig::default(), false);
+	config.guardrail_mode = magpie::guardrail::Mode::LogOnly;
+	config.webhook_token = "test-webhook-secret".into();
+	let base = spawn_with(config).await;
+	let (client, _) = client(&base);
+	let text = "Example only. ABN 12 000 000 041.";
+	let requests = [
+		(
+			"/guardrails/request",
+			json!({"body": {"messages": [{"role": "user", "content": text}]}}),
+		),
+		(
+			"/guardrails/response",
+			json!({"body": {"choices": [{"message": {"role": "assistant", "content": text}}]}}),
+		),
+		(
+			"/mcp/check",
+			mcp(
+				Some("unapproved"),
+				"example-au-model",
+				"ap-southeast-2",
+				"example-au-model",
+				text,
+			),
+		),
+	];
+	for (path, payload) in requests {
+		let denied = client
+			.post(format!("{base}{path}"))
+			.json(&payload)
+			.send()
+			.await
+			.unwrap();
+		assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+		let reply = client
+			.post(format!("{base}{path}"))
+			.header("x-magpie-webhook-token", "test-webhook-secret")
+			.header("x-magpie-region", "ap-southeast-2")
+			.header("x-magpie-destination", "example-au-model")
+			.header("x-magpie-model", "example-au-model")
+			.json(&payload)
+			.send()
+			.await
+			.unwrap();
+		assert_eq!(reply.status(), StatusCode::OK);
+		let reply: serde_json::Value = reply.json().await.unwrap();
+		if path == "/mcp/check" {
+			assert_eq!(reply["decision"], "pass");
+			assert_eq!(reply["text"], text);
+		} else {
+			assert!(reply["action"].get("body").is_none());
+			assert!(reply["action"].get("status_code").is_none());
+			assert!(
+				reply["action"]["reason"]
+					.as_str()
+					.unwrap()
+					.contains("would redact")
+			);
+		}
+	}
+	login(&client, &base, "alex").await;
+	let settings = client
+		.get(format!("{base}/settings"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(settings.contains("Log-only trial"));
+	assert!(settings.contains("<strong>log-only</strong>"));
+	let csv = client
+		.get(format!("{base}/audit.csv"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(csv.contains("Log-only: would redact"));
+	assert!(csv.contains("Log-only: would block"));
+	assert!(csv.contains("wouldAction"));
+	assert!(!csv.contains("12 000 000 041"));
 }

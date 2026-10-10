@@ -25,6 +25,35 @@ the same value in `x-magpie-webhook-token`. `MAGPIE_BOOTSTRAP_MODELS`
 allowed for PROTECTED traffic, merged into settings on every start.
 A `postgres://` URL is refused; use a SQLite file or `:memory:`.
 
+## Log-only trials
+
+Set `MAGPIE_GUARDRAIL_MODE=log-only` to evaluate policy without blocking or
+rewriting LLM requests, LLM responses or `/mcp/check` traffic. The default is
+`enforce`; unknown values stop startup. The mode comes from the deployment,
+not request headers or portal policy imports. Settings shows the mode and
+all portal pages show a banner during a trial.
+
+Audit decisions are `log`, with the would-be policy action in
+`detail.wouldAction`, the mode in `detail.mode`, and the findings and reason
+preserved. Matched values and full payloads are not added to the audit log.
+The normal first matching rejection still ends policy evaluation. A would-be
+`redact`, `mask` or `tokenise` action on an LLM request becomes a block in
+enforcement mode, as documented below. In log-only mode the original traffic
+passes through, including identifiers and secrets.
+
+Log-only covers approvals, sovereignty, DLP, injection checks, tool limits,
+argument validation and kill switches. Authentication and portal permissions
+still apply. Proxy-level CEL/MCP allow lists and upstream provider restrictions
+are independent: the Compose MCP example still enforces its static allow list
+and does not call `/mcp/check`. Review those separate controls before an MCP
+trial. Webhook transport failures also retain the proxy's configured failure
+mode; the engagement proxy remains fail-closed if the portal is unavailable.
+
+To roll out enforcement, set `MAGPIE_GUARDRAIL_MODE=enforce` and restart the
+portal. Policy rules and approvals are kept, so the same findings now take
+effect. For Helm, use `portal.environment.MAGPIE_GUARDRAIL_MODE`; for engagement
+deployments use `GUARDRAIL_MODE` in `magpie.conf` and run `./magpie.sh up`.
+
 Build and test from the repository root:
 
 ```bash

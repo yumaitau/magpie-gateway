@@ -144,3 +144,19 @@ Fable models have no AU inference profile and are not offered.
   It is git-ignored. Back it up somewhere the client has agreed to, and
   hand it over at the end.
 - Only AWS is wired up. Azure Container Apps is the next target.
+
+## Trial before enforcement
+
+New engagements set `GUARDRAIL_MODE=log-only` in `engagements/<client>/magpie.conf`.
+Existing configurations without this setting retain enforcement. To trial an
+existing deployment, add `GUARDRAIL_MODE=log-only` and run `./magpie.sh up <client>`.
+The portal shows a trial banner. Requests and responses pass unchanged while
+policy findings appear in the audit log and CSV as `log`, with the would-be
+action and reason. Kill switches also only log during a trial; gateway API keys
+and portal sign-in remain required.
+
+Review the findings, adjust policy and approvals, then set
+`GUARDRAIL_MODE=enforce` and run `./magpie.sh up <client>` to roll out enforcement.
+`./magpie.sh check <client>` verifies identifier traffic passes during a trial
+and is blocked during enforcement. The proxy still fails closed on a webhook
+outage. See `magpie/README.md` for the independent MCP proxy controls.

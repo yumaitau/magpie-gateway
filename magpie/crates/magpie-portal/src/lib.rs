@@ -34,6 +34,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub struct Config {
+	pub guardrail_mode: guardrail::Mode,
 	pub database_path: String,
 	pub cookie_secure: bool,
 	pub demo: bool,
@@ -770,6 +771,13 @@ fn viewer_of(session: &SessionRecord) -> ui::Viewer {
 }
 
 fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: String) -> Response {
+	let body = if state.inner.config.guardrail_mode == guardrail::Mode::LogOnly {
+		format!(
+			r#"<p class="banner warn" role="status">Log-only trial: policies are evaluated and logged, but traffic is not blocked or changed. Kill switches are also log-only.</p>{body}"#
+		)
+	} else {
+		body
+	};
 	match session_from(state, headers) {
 		Ok((session, cookie)) => {
 			let mut response = Html(ui::layout(
@@ -1602,7 +1610,8 @@ async fn rollback_revision(
 async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
 	let settings = load_settings(&state);
 	let body = format!(
-		r#"<form method="post" action="/settings">
+		r#"<p>Guardrail mode: <strong>{}</strong>. Set MAGPIE_GUARDRAIL_MODE in the deployment to log-only or enforce, then redeploy.</p>
+<form method="post" action="/settings">
 <label for="sovereign">Sovereign mode</label>
 <select id="sovereign" name="sovereign"><option value="true" {}>On</option><option value="false" {}>Off</option></select>
 <label for="telemetry">Telemetry and phone-home</label>
@@ -1622,6 +1631,7 @@ async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 <p>SAML 2.0 is not enabled.</p>
 <p>Presidio, when configured, uses ghcr.io/data-privacy-stack images. Microsoft's registry is not used.</p>
 <p>Prompt injection can call a webhook or a model you host. Llama Prompt Guard 2 weights are not included. They are under the Llama 4 Community License.</p>"#,
+		state.inner.config.guardrail_mode.as_str(),
 		selected(settings.sovereign_mode),
 		selected(!settings.sovereign_mode),
 		selected(!settings.telemetry_enabled),
@@ -1962,6 +1972,7 @@ async fn run_decision(
 	};
 	let argument_rules = load_argument_rules(state);
 	let policy = PolicySet {
+		mode: state.inner.config.guardrail_mode,
 		rules: &rules,
 		approvals: &approvals,
 		approved_protected: &settings.approved_protected,

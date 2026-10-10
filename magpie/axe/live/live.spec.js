@@ -13,6 +13,7 @@ test.describe.configure({ mode: 'serial' });
 
 const person = process.env.MAGPIE_PERSON;
 const model = process.env.MAGPIE_MODEL;
+const logOnly = process.env.MAGPIE_GUARDRAIL_MODE === 'log-only';
 const tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 async function signIn(page) {
@@ -88,15 +89,22 @@ test('a request through the gateway appears in the audit log under its sender', 
   await expect(page.locator('body')).toContainText(model);
 });
 
-test('the per-agent kill switch set in the portal blocks that person, and clearing it restores access', async ({ page, request }) => {
+test('the per-agent kill switch respects the deployment mode and is restored after testing', async ({ page, request }) => {
   await signIn(page);
-  await setKillAgent(page, person);
+  await page.goto(`${base}/settings`);
+  const previous = await page.locator('#kill_agent').inputValue();
+  await setKillAgent(page, [previous, person].filter(Boolean).join(', '));
   try {
     const blocked = await ask(request, 'Reply with the word ready.');
-    expect(blocked.status(), await blocked.text()).toBe(400);
-    expect((await blocked.json()).error.message).toContain('Magpie Gateway blocked');
+    expect(blocked.status(), await blocked.text()).toBe(logOnly ? 200 : 400);
+    if (logOnly) {
+      await page.goto(`${base}/audit`);
+      await expect(page.locator('body')).toContainText('Log-only: would block');
+    } else {
+      expect((await blocked.json()).error.message).toContain('Magpie Gateway blocked');
+    }
   } finally {
-    await setKillAgent(page, '');
+    await setKillAgent(page, previous);
   }
   const restored = await ask(request, 'Reply with the word ready.');
   expect(restored.status(), await restored.text()).toBe(200);

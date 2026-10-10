@@ -112,6 +112,7 @@ fn portal_config(issuer: String, webhook_token: &str) -> Config {
 	let mut role_map = RoleMap::default();
 	role_map.extend_from(|name| (name == "MAGPIE_ROLE_OWNERS").then(|| "Magpie.Owner".into()));
 	Config {
+		guardrail_mode: Default::default(),
 		database_path: ":memory:".into(),
 		cookie_secure: false,
 		demo: false,
