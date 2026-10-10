@@ -1,0 +1,95 @@
+# Semantic Routing Examples
+
+These examples demonstrate different ways to integrate [vLLM Semantic Router (vSR)](https://vllm-sr.ai/)
+with agentgateway.
+
+All examples use the same core architecture:
+
+```text
+Client
+   |
+agentgateway
+   |
+vSR ExtProc
+   |
+LLM provider(s)
+```
+
+Each example focuses on a different production use case.
+
+| agentgateway mode | Example | Demonstrates | Best for |
+| --- | --- | --- | --- |
+| Kubernetes | [Cost-based routing](k8s/cost-based/) | Route requests to lower-cost or higher-capability models based on semantic classification. | Cost optimization while maintaining response quality. |
+| Kubernetes | [Tier-aware routing with CRDs](k8s/tier-aware/) | Select a tier-specific vSR runtime configured by `IntelligentPool` and `IntelligentRoute`. | Kubernetes-native pool/route management and separate runtimes per tier. |
+| Kubernetes | [Tier-aware routing with one runtime](k8s/tier-aware-single-runtime/) | Combine tier and semantic signals in a single vSR runtime using the [v0.3 Unified Config Contract](https://vllm-sr.ai/docs/proposals/unified-config-contract-v0-3). | This example **does not** use the vSR `IntelligentPool` and `IntelligentRoute` CRDs. |
+| Kubernetes | [Semantic caching](k8s/semantic-cache/) | Cache semantically equivalent requests in Redis Open Source and optionally share entries across vSR replicas. | Product support, documentation assistants, FAQ chatbots, and other workloads with many repeated questions. |
+| Standalone | [Tier-aware routing](standalone/tier-aware-single-runtime/) | Use one YAML-configured vSR runtime with standalone agentgateway in Docker Compose. | Local development and deployments without Kubernetes. |
+
+## Choosing an example
+
+### Cost-based routing
+
+Use this example when you want vSR to decide **which model** should answer a
+request.
+
+Typical goals include:
+
+- reducing LLM cost
+- balancing quality and latency
+- automatically selecting inexpensive models for routine requests
+
+See: `k8s/cost-based`
+
+---
+
+### Tier-aware routing
+
+Use this example when different users are allowed to access different model
+capabilities.
+
+Typical goals include:
+
+- Basic / Pro subscriptions
+- internal vs external users
+- premium AI features
+- provider-specific model pools
+
+Choose a deployment pattern:
+
+- [Kubernetes with CRDs](k8s/tier-aware/): one vSR runtime per tier, with Kubernetes `IntelligentPool`
+  and `IntelligentRoute` custom resources.
+- [Kubernetes with one runtime](k8s/tier-aware-single-runtime/): one shared vSR runtime,
+  with tier-aware decisions in a canonical YAML ConfigMap.
+- [Standalone with Docker Compose](standalone/tier-aware-single-runtime/): one shared
+  vSR runtime configured with canonical YAML.
+
+All three examples demonstrate Basic, Standard, and Pro user entitlements and use
+agentgateway for provider-based routing.
+
+---
+
+### Semantic caching
+
+Use this example when many users ask **the same question in different ways**.
+
+Instead of generating a new response for every request, vSR recognizes
+semantically equivalent prompts and returns a previously generated response from
+a Redis Open Source cache.
+
+The example demonstrates:
+
+- local kind deployment
+- Redis Open Source 8 with vector search
+- Redis-backed semantic cache
+- semantic cache hits for paraphrased requests
+- optional cache sharing across vSR replicas
+- cache persistence across Redis pod restarts
+
+vSR supports multiple cache backends, including a default in-memory store.
+Redis is used here as a production-oriented backend because it allows vSR
+replicas to share cache entries and persist them across process restarts. Redis
+also backs other agentgateway-related services, such as [global rate
+limiting](https://agentgateway.dev/docs/kubernetes/main/documentation/security/rate-limit-global/).
+The example enables Redis persistence on a local persistent volume.
+
+See: `k8s/semantic-cache`
