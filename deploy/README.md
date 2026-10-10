@@ -23,7 +23,9 @@ applies it with their own client.
 
 Pushes to `main` publish `ghcr.io/yumaitau/magpie-gateway-portal` tagged
 with the commit SHA and `main`, then sign that digest with keyless
-cosign. No signing key is stored in the repository.
+cosign. No signing key is stored in the repository. GitHub leaves a
+new container package private. An owner of the package marks it
+public before `cosign verify` works without a login.
 
 ```bash
 cosign verify ghcr.io/yumaitau/magpie-gateway-portal:main \
