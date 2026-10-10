@@ -113,6 +113,9 @@ jobs:
           deploy/compose/smoke.sh
       - name: Stop compose
         if: always()
+        env:
+          # Compose interpolates the file before down. The secret is not used.
+          MAGPIE_SESSION_SECRET: unused
         run: docker compose -f deploy/compose/docker-compose.yml down -v
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
