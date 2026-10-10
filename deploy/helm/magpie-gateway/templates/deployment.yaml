@@ -1,32 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-portal
+  name: {{ .Release.Name }}
   labels:
-    app.kubernetes.io/name: magpie-gateway
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "magpie.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  # SQLite on a ReadWriteOnce volume has one writer.
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: magpie-gateway
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "magpie.selector" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: magpie-gateway
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- include "magpie.selector" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Values.proxy.config | sha256sum }}
+        checksum/secrets: {{ toJson .Values.secrets | sha256sum }}
+        checksum/environment: {{ toJson .Values.portal.environment | sha256sum }}
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: portal
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ .Values.portal.image | quote }}
+          imagePullPolicy: {{ .Values.portal.imagePullPolicy }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
-            - name: http
+            - name: portal
               containerPort: 8088
           env:
             - name: MAGPIE_DATABASE_URL
@@ -35,38 +40,63 @@ spec:
               value: 0.0.0.0:8088
             - name: MAGPIE_COOKIE_SECURE
               value: {{ ternary "1" "0" .Values.cookieSecure | quote }}
-            - name: MAGPIE_SESSION_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-portal
-                  key: sessionSecret
-            - name: MAGPIE_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-portal
-                  key: adminPassword
-            - name: MAGPIE_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-portal
-                  key: oidcClientSecret
-            - name: MAGPIE_ENTRA_TENANT_ID
-              value: {{ .Values.oidc.entraTenantId | quote }}
-            - name: MAGPIE_OIDC_ISSUER
-              value: {{ .Values.oidc.issuer | quote }}
-            - name: MAGPIE_OIDC_CLIENT_ID
-              value: {{ .Values.oidc.clientId | quote }}
-            - name: MAGPIE_PUBLIC_URL
-              value: {{ .Values.oidc.publicUrl | quote }}
+            {{- range $key, $value := .Values.portal.environment }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-portal
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: tmp
+            - name: portal-tmp
               mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: portal
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: portal
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.portal.resources | nindent 12 }}
+        {{- if .Values.proxy.enabled }}
+        - name: proxy
+          image: {{ .Values.proxy.image | quote }}
+          imagePullPolicy: {{ .Values.proxy.imagePullPolicy }}
+          args: ["--file", "/config/config.yaml"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: llm
+              containerPort: 4000
+            - name: ready
+              containerPort: 15021
+          env:
+            - name: MAGPIE_PORTAL_HOST
+              value: localhost:8088
+            - name: AWS_REGION
+              value: {{ .Values.proxy.awsRegion | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-proxy
+          volumeMounts:
+            - name: proxy-config
+              mountPath: /config
+              readOnly: true
+            - name: proxy-tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: ready
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+        {{- end }}
         {{- if .Values.presidio.enabled }}
         - name: presidio-analyzer
           image: "{{ .Values.presidio.analyzerRepository }}:{{ .Values.presidio.analyzerTag }}"
@@ -87,5 +117,12 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-portal
-        - name: tmp
+        - name: portal-tmp
           emptyDir: {}
+        - name: proxy-tmp
+          emptyDir: {}
+        {{- if .Values.proxy.enabled }}
+        - name: proxy-config
+          configMap:
+            name: {{ .Release.Name }}-proxy
+        {{- end }}

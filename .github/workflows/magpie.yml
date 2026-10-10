@@ -49,6 +49,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck -S warning magpie.sh deploy/compose/smoke.sh
+      - name: Helm chart
+        run: |
+          helm lint deploy/helm/magpie-gateway \
+            --set secrets.MAGPIE_SESSION_SECRET=ci-session-secret \
+            --set secrets.MAGPIE_ADMIN_PASSWORD=ci-admin-password-0001 \
+            --set proxy.config='llm: {}'
+          if helm template t deploy/helm/magpie-gateway --set secrets.MAGPIE_SESSION_SECRET=change-me >/dev/null 2>&1; then
+            echo "chart accepted a default session secret" >&2
+            exit 1
+          fi
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.8

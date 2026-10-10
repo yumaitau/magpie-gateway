@@ -1,0 +1,11 @@
+{{- if .Values.proxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-proxy
+  labels:
+    {{- include "magpie.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- .Values.proxy.config | nindent 4 }}
+{{- end }}

@@ -13,9 +13,50 @@ variable "region" {
   default     = "ap-southeast-2"
 }
 
+variable "existing_cluster_name" {
+  description = "Install into this EKS cluster. Empty creates a VPC and an EKS Auto Mode cluster."
+  type        = string
+  default     = ""
+}
+
+variable "existing_cluster_auto_mode" {
+  description = "Whether the existing cluster runs EKS Auto Mode. Otherwise it needs the AWS Load Balancer Controller and the EBS CSI driver."
+  type        = bool
+  default     = false
+}
+
+variable "existing_cluster_storage_class" {
+  description = "Storage class for the portal volume on an existing cluster that is not in Auto Mode. Empty uses the default class."
+  type        = string
+  default     = ""
+}
+
+variable "load_balancer_subnet_ids" {
+  description = "Private subnets for the internal load balancer. Empty uses the created private subnets, or the existing cluster's subnets."
+  type        = list(string)
+  default     = []
+}
+
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "Who may reach the created cluster's Kubernetes API. ./magpie.sh sets this to the operator's address."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "vpc_cidr" {
   type    = string
   default = "10.42.0.0/16"
+}
+
+variable "chart_path" {
+  description = "Path to the magpie-gateway Helm chart. Empty uses the chart beside this module."
+  type        = string
+  default     = ""
+}
+
+variable "namespace" {
+  type    = string
+  default = "magpie"
 }
 
 variable "portal_image" {
@@ -29,7 +70,7 @@ variable "proxy_image" {
 }
 
 variable "proxy_config" {
-  description = "agentgateway YAML. ./magpie writes it. $MAGPIE_* names are expanded from the container environment."
+  description = "agentgateway YAML. ./magpie.sh writes it. $MAGPIE_* names are expanded from the container environment."
   type        = string
 }
 
@@ -49,9 +90,4 @@ variable "bedrock_regions" {
   description = "Regions an AU inference profile may route to."
   type        = list(string)
   default     = ["ap-southeast-2", "ap-southeast-4"]
-}
-
-variable "log_retention_days" {
-  type    = number
-  default = 365
 }

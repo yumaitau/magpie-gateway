@@ -1,42 +1,69 @@
-replicaCount: 1
+# Magpie Gateway. One pod runs the portal and the agentgateway proxy. The
+# proxy calls the portal's guardrail webhook on localhost, so that route is
+# never exposed. The portal keeps SQLite on a ReadWriteOnce volume, so the
+# pod runs one replica and is replaced with the Recreate strategy.
 
-image:
-  repository: magpie-gateway-portal
-  tag: "0.1.0"
-  pullPolicy: IfNotPresent
+portal:
+  image: ghcr.io/yumaitau/magpie-gateway-portal:main
+  imagePullPolicy: IfNotPresent
+  # Non-secret MAGPIE_* settings, for example MAGPIE_PUBLIC_URL,
+  # MAGPIE_ENTRA_TENANT_ID, MAGPIE_OIDC_CLIENT_ID, MAGPIE_BOOTSTRAP_MODELS.
+  environment: {}
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
 
-service:
-  port: 8088
+proxy:
+  enabled: true
+  image: ghcr.io/agentgateway/agentgateway:v1.6.0
+  imagePullPolicy: IfNotPresent
+  # agentgateway YAML. $MAGPIE_* and provider key names are expanded from
+  # the container environment. ./magpie.sh writes it.
+  config: ""
+  awsRegion: ap-southeast-2
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 1Gi}
 
-# Off unless an operator sets a real endpoint.
-telemetry: false
-presidio:
-  enabled: false
-  # Community images, uid 1001, port 3000. Pin a digest before production.
-  # Do not use mcr.microsoft.com/presidio. The sidecar does not use the
-  # portal's read-only root or uid 65532.
-  analyzerRepository: ghcr.io/data-privacy-stack/presidio-analyzer
-  analyzerTag: latest
-  anonymizerRepository: ghcr.io/data-privacy-stack/presidio-anonymizer
-  anonymizerTag: latest
+# Secret settings. MAGPIE_SESSION_SECRET is required, and either
+# MAGPIE_ADMIN_PASSWORD (16+ characters) or portal.environment
+# MAGPIE_OIDC_CLIENT_ID. MAGPIE_* keys go to the portal; the proxy gets
+# MAGPIE_WEBHOOK_TOKEN and every key that does not start with MAGPIE_.
+secrets: {}
 
-# Required. helm template fails while this is empty or a known default.
-sessionSecret: ""
 cookieSecure: true
-# Sign-in. Set adminPassword (16+ characters), oidc.clientId, or both.
-# The chart fails when neither is set.
-adminPassword: ""
-oidc:
-  # Microsoft Entra ID tenant ID, or leave empty and set issuer.
-  entraTenantId: ""
-  issuer: ""
-  clientId: ""
-  clientSecret: ""
-  # External URL, used for the redirect URI.
-  publicUrl: ""
 
 persistence:
   size: 1Gi
+  # Empty uses the cluster default class.
+  storageClassName: ""
+
+# EKS Auto Mode ships the EBS CSI driver but no StorageClass.
+storageClass:
+  create: false
+  name: magpie-gp3
+  provisioner: ebs.csi.eks.amazonaws.com
+
+serviceAccount:
+  name: magpie
+  annotations: {}
+
+# Register the pod with load balancer target groups created outside the
+# chart. apiVersion is eks.amazonaws.com/v1 on EKS Auto Mode and
+# elbv2.k8s.aws/v1beta1 with the self-managed AWS Load Balancer Controller.
+targetGroupBinding:
+  enabled: false
+  apiVersion: eks.amazonaws.com/v1
+  portalTargetGroupArn: ""
+  proxyTargetGroupArn: ""
+  # The controller opens these ports to the load balancer's security group.
+  loadBalancerSecurityGroupId: ""
+
+presidio:
+  enabled: false
+  # Community images, uid 1001, port 3000. Pin a digest before production.
+  analyzerRepository: ghcr.io/data-privacy-stack/presidio-analyzer
+  analyzerTag: latest
 
 podSecurityContext:
   runAsNonRoot: true

@@ -62,20 +62,28 @@ call.
 
 ## Helm
 
+The chart runs the portal and agentgateway in one pod. `./magpie.sh up`
+installs it through Terraform. By hand:
+
 ```bash
-helm template magpie deploy/helm/magpie-gateway --set sessionSecret="$(openssl rand -hex 32)" \
-  --set adminPassword="$(openssl rand -hex 16)"
+./magpie.sh render acme > proxy.yaml
+helm upgrade --install magpie deploy/helm/magpie-gateway -n magpie --create-namespace \
+  --set secrets.MAGPIE_SESSION_SECRET="$(openssl rand -hex 32)" \
+  --set secrets.MAGPIE_WEBHOOK_TOKEN="$(openssl rand -hex 32)" \
+  --set secrets.MAGPIE_ADMIN_PASSWORD="$(openssl rand -hex 16)" \
+  --set-file proxy.config=proxy.yaml
 ```
 
-The chart refuses an empty `sessionSecret` and the old defaults
-`change-me`, `dev-only-change-me`, and `magpie-example-key`. It does
-not create a TLS certificate. Terminate TLS at the ingress. The chart
-still runs the portal only. Use Compose when you want the proxy beside it.
+The chart refuses an empty `MAGPIE_SESSION_SECRET` and the old defaults
+`change-me`, `dev-only-change-me` and `magpie-example-key`, and it fails
+without an admin password or an OIDC client ID. It does not create an
+ingress or a certificate. Set `targetGroupBinding.*` to register the pod
+with load balancer target groups you own, as the Terraform does.
 
 ## Cloud examples
 
-`terraform/aws` is the full stack `./magpie.sh up` deploys: the portal
-and agentgateway in one Fargate task in `ap-southeast-2`, EFS for the
-portal database, an internal load balancer and a CloudFront address.
-See `docs/engagement.md`. `terraform/azure` is still a portal-only
+`terraform/aws` is the stack `./magpie.sh up` deploys: an EKS Auto Mode
+cluster (or an existing cluster), the Helm chart, an internal load
+balancer and a CloudFront address in `ap-southeast-2`. See
+`docs/engagement.md`. `terraform/azure` is still a portal-only
 Container App example in `australiaeast`.

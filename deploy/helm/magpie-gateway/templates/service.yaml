@@ -3,12 +3,30 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}-portal
   labels:
-    app.kubernetes.io/name: magpie-gateway
+    {{- include "magpie.labels" . | nindent 4 }}
 spec:
   ports:
     - name: http
-      port: {{ .Values.service.port }}
-      targetPort: http
+      port: 8088
+      targetPort: portal
   selector:
-    app.kubernetes.io/name: magpie-gateway
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "magpie.selector" . | nindent 4 }}
+{{- if .Values.proxy.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-proxy
+  labels:
+    {{- include "magpie.labels" . | nindent 4 }}
+spec:
+  ports:
+    - name: llm
+      port: 4000
+      targetPort: llm
+    - name: ready
+      port: 15021
+      targetPort: ready
+  selector:
+    {{- include "magpie.selector" . | nindent 4 }}
+{{- end }}

@@ -1,0 +1,48 @@
+{{- if .Values.targetGroupBinding.enabled }}
+{{- $tgb := .Values.targetGroupBinding }}
+apiVersion: {{ $tgb.apiVersion }}
+kind: TargetGroupBinding
+metadata:
+  name: {{ .Release.Name }}-portal
+  labels:
+    {{- include "magpie.labels" . | nindent 4 }}
+spec:
+  serviceRef:
+    name: {{ .Release.Name }}-portal
+    port: 8088
+  targetGroupARN: {{ required "targetGroupBinding.portalTargetGroupArn" $tgb.portalTargetGroupArn }}
+  targetType: ip
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: {{ required "targetGroupBinding.loadBalancerSecurityGroupId" $tgb.loadBalancerSecurityGroupId }}
+        ports:
+          - protocol: TCP
+            port: 8088
+{{- if .Values.proxy.enabled }}
+---
+apiVersion: {{ $tgb.apiVersion }}
+kind: TargetGroupBinding
+metadata:
+  name: {{ .Release.Name }}-proxy
+  labels:
+    {{- include "magpie.labels" . | nindent 4 }}
+spec:
+  serviceRef:
+    name: {{ .Release.Name }}-proxy
+    port: 4000
+  targetGroupARN: {{ required "targetGroupBinding.proxyTargetGroupArn" $tgb.proxyTargetGroupArn }}
+  targetType: ip
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: {{ $tgb.loadBalancerSecurityGroupId }}
+        ports:
+          - protocol: TCP
+            port: 4000
+          - protocol: TCP
+            port: 15021
+{{- end }}
+{{- end }}

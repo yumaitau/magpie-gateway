@@ -1,13 +1,46 @@
 # HTTPS without a custom domain: CloudFront's default certificate in front
 # of an internal load balancer. /v1/* goes to the proxy, everything else to
 # the portal. The portal's guardrail routes are only for the proxy, which
-# reaches them on localhost inside the task, so the load balancer refuses them.
+# reaches them on localhost inside the pod, so the load balancer refuses them.
+# The pod registers itself in these target groups through TargetGroupBinding.
+
+data "aws_vpc" "this" {
+  id = local.vpc_id
+}
+
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+resource "aws_security_group" "alb" {
+  name        = "magpie-${var.name}-alb"
+  description = "Internal load balancer, reached only by CloudFront"
+  vpc_id      = local.vpc_id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
+  security_group_id = aws_security_group.alb.id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+}
+
+# Pods take VPC addresses. The TargetGroupBinding opens the pod side.
+resource "aws_vpc_security_group_egress_rule" "alb_to_pods" {
+  for_each          = toset(["8088", "4000", "15021"])
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = data.aws_vpc.this.cidr_block
+  ip_protocol       = "tcp"
+  from_port         = tonumber(each.value)
+  to_port           = tonumber(each.value)
+}
 
 resource "aws_lb" "this" {
   name                       = "magpie-${var.name}"
   internal                   = true
   load_balancer_type         = "application"
-  subnets                    = aws_subnet.private[*].id
+  subnets                    = local.load_balancer_subnet_ids
   security_groups            = [aws_security_group.alb.id]
   idle_timeout               = 600
   drop_invalid_header_fields = true
@@ -18,7 +51,7 @@ resource "aws_lb_target_group" "portal" {
   port        = 8088
   protocol    = "HTTP"
   target_type = "ip"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = local.vpc_id
   health_check {
     path    = "/healthz"
     matcher = "200"
@@ -31,7 +64,7 @@ resource "aws_lb_target_group" "proxy" {
   port        = 4000
   protocol    = "HTTP"
   target_type = "ip"
-  vpc_id      = aws_vpc.this.id
+  vpc_id      = local.vpc_id
   health_check {
     path    = "/healthz/ready"
     port    = "15021"

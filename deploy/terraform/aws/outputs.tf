@@ -3,14 +3,10 @@ output "url" {
   value       = local.public_url
 }
 
-output "cluster" {
-  value = aws_ecs_cluster.this.name
+output "cluster_name" {
+  value = local.cluster_name
 }
 
-output "service" {
-  value = aws_ecs_service.this.name
-}
-
-output "log_group" {
-  value = aws_cloudwatch_log_group.this.name
+output "namespace" {
+  value = var.namespace
 }

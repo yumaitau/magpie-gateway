@@ -9,6 +9,7 @@
 #   ./magpie.sh check <client>            smoke test the live gateway
 #   ./magpie.sh uitest <client>           browser test of the live portal
 #   ./magpie.sh report <client>           download the audit log and register
+#   ./magpie.sh kubectl <client> <args>   kubectl in the magpie namespace
 #   ./magpie.sh down <client>             destroy everything
 #
 # Everything for one client lives in engagements/<client>/. That folder holds
@@ -126,10 +127,20 @@ cmd_new() {
 	step "Magpie Gateway for $CLIENT"
 	say "A few questions. Every answer can be changed later in $DIR/magpie.conf."
 
-	local cloud aws_profile owner bedrock="" azure_resource="" azure_models="" azure_region="" azure_key="" names
+	local cloud aws_profile cluster="" auto_mode=false storage_class="" owner bedrock="" azure_resource="" azure_models="" azure_region="" azure_key="" names
 	ask cloud "Cloud to deploy into (aws)" aws
 	[[ $cloud == aws ]] || die "Only aws is ready. Azure Container Apps is next."
 	ask aws_profile "AWS CLI profile for the client's account" "${AWS_PROFILE:-default}"
+
+	step "Kubernetes"
+	say "Magpie runs on EKS. Leave this blank to create a VPC and an EKS Auto Mode cluster"
+	say "(about US\$110 a month before nodes, for the control plane and one NAT gateway)."
+	ask cluster "Existing EKS cluster to install into, in ap-southeast-2" ""
+	if [[ -n $cluster ]]; then
+		local found
+		found="$(AWS_PROFILE="$aws_profile" inspect_cluster "$cluster")" || exit 1
+		read -r auto_mode storage_class <<<"$found"
+	fi
 	ask owner "Business owner email at the client (recorded on model approvals)"
 
 	step "Models"
@@ -167,6 +178,11 @@ cmd_new() {
 CLOUD=$cloud
 AWS_PROFILE=$(printf '%q' "$aws_profile")
 AWS_REGION=ap-southeast-2
+# Empty creates an EKS Auto Mode cluster. Otherwise Magpie installs into this one.
+EKS_CLUSTER=$(printf '%q' "$cluster")
+EKS_AUTO_MODE=$auto_mode
+# Storage class for the portal volume on a cluster without Auto Mode. Empty uses the default.
+EKS_STORAGE_CLASS=$(printf '%q' "$storage_class")
 OWNER_EMAIL=$(printf '%q' "$owner")
 # name=bedrock-model-id pairs. Empty turns Bedrock off.
 BEDROCK_MODELS=$(printf '%q' "$bedrock")
@@ -198,6 +214,27 @@ EOF
 	step "Ready"
 	say "Saved to $DIR"
 	say "Next: ./magpie.sh up $CLIENT"
+}
+
+# Prints "<auto mode true|false> <storage class>" and stops when the cluster
+# lacks what the chart needs.
+inspect_cluster() {
+	local name="$1" auto class
+	need aws
+	auto="$(aws eks describe-cluster --region ap-southeast-2 --name "$name" \
+		--query 'cluster.computeConfig.enabled' --output text 2>/dev/null)" ||
+		die "Cannot read EKS cluster $name in ap-southeast-2 with this profile."
+	if [[ $auto == True ]]; then
+		say "$name runs EKS Auto Mode. Nothing else is needed." >&2
+		printf 'true \n'
+		return
+	fi
+	aws eks describe-addon --region ap-southeast-2 --cluster-name "$name" --addon-name eks-pod-identity-agent >/dev/null 2>&1 ||
+		die "$name has no eks-pod-identity-agent add-on. Add it (aws eks create-addon --addon-name eks-pod-identity-agent), then run new again."
+	say "$name is not in Auto Mode. It needs the AWS Load Balancer Controller (for TargetGroupBinding)" >&2
+	say "and a storage class backed by the EBS CSI driver." >&2
+	read -r -p "Storage class for the portal volume (blank uses the cluster default): " class
+	printf 'false %s\n' "$class"
 }
 
 # Gateway name for a Bedrock ID: au.anthropic.claude-sonnet-4-5-20250929-v1:0 -> claude-sonnet-4-5
@@ -361,6 +398,12 @@ module "magpie" {
   proxy_config       = var.proxy_config
   portal_environment = var.portal_environment
   secrets            = var.secrets
+
+  existing_cluster_name                = var.existing_cluster_name
+  existing_cluster_auto_mode           = var.existing_cluster_auto_mode
+  existing_cluster_storage_class       = var.existing_cluster_storage_class
+  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+  chart_path                           = "$ROOT/deploy/helm/magpie-gateway"
 }
 
 variable "name" { type = string }
@@ -369,6 +412,10 @@ variable "portal_image" { type = string }
 variable "proxy_image" { type = string }
 variable "proxy_config" { type = string }
 variable "portal_environment" { type = map(string) }
+variable "existing_cluster_name" { type = string }
+variable "existing_cluster_auto_mode" { type = bool }
+variable "existing_cluster_storage_class" { type = string }
+variable "cluster_endpoint_public_access_cidrs" { type = list(string) }
 variable "secrets" {
   type      = map(string)
   sensitive = true
@@ -377,12 +424,23 @@ variable "secrets" {
 output "url" {
   value = module.magpie.url
 }
+
+output "cluster_name" {
+  value = module.magpie.cluster_name
+}
 EOF
+	# A created cluster's Kubernetes API only answers this machine.
+	local operator
+	operator="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')" || die "Cannot work out this machine's public address."
 	(
 		umask 077
 		jq -n \
 			--arg name "$CLIENT" \
 			--arg region "$AWS_REGION" \
+			--arg cluster "${EKS_CLUSTER:-}" \
+			--argjson auto_mode "${EKS_AUTO_MODE:-false}" \
+			--arg storage_class "${EKS_STORAGE_CLASS:-}" \
+			--arg operator "$operator/32" \
 			--arg portal_image "$(pin_image "$PORTAL_IMAGE")" \
 			--arg proxy_image "$(pin_image "$PROXY_IMAGE")" \
 			--rawfile proxy_config "$DIR/agentgateway.yaml" \
@@ -397,6 +455,10 @@ EOF
 			--arg azure_key "${AZURE_OPENAI_API_KEY:-}" \
 			'{
 				name: $name, region: $region,
+				existing_cluster_name: $cluster,
+				existing_cluster_auto_mode: $auto_mode,
+				existing_cluster_storage_class: $storage_class,
+				cluster_endpoint_public_access_cidrs: [$operator],
 				portal_image: $portal_image, proxy_image: $proxy_image,
 				proxy_config: $proxy_config,
 				portal_environment: ({
@@ -448,9 +510,6 @@ cmd_up() {
 	tf apply
 	local base
 	base="$(url)"
-	step "Waiting for the new task to start"
-	aws ecs wait services-stable --cluster "magpie-$CLIENT" --services "magpie-$CLIENT" ||
-		die "The ECS service did not settle. Check the /magpie/$CLIENT log group."
 	step "Waiting for the gateway to answer (CloudFront can take 10 to 15 minutes the first time)"
 	local tries=0
 	until curl -fs -o /dev/null "$base/healthz"; do
@@ -461,6 +520,7 @@ cmd_up() {
 	step "Magpie Gateway is up"
 	say "Portal:   $base"
 	say "Sign in:  admin / see MAGPIE_ADMIN_PASSWORD in $DIR/secrets.env"
+	say "Logs:     ./magpie.sh kubectl $CLIENT logs deploy/magpie -c proxy"
 	say "Next:     ./magpie.sh connect $CLIENT <person>    then    ./magpie.sh check $CLIENT"
 }
 
@@ -729,6 +789,21 @@ cmd_uitest() {
 	)
 }
 
+# ---------------------------------------------------------------- kubectl
+
+# Runs kubectl against the deployment's cluster with a kubeconfig kept in
+# the engagement folder, so the operator's own config is not touched.
+cmd_kubectl() {
+	load "${1:-}"
+	shift
+	need aws kubectl
+	aws_env
+	local cluster
+	cluster="$(terraform -chdir="$DIR/terraform" output -raw cluster_name 2>/dev/null)" || die "Not deployed yet."
+	aws eks update-kubeconfig --region "$AWS_REGION" --name "$cluster" --kubeconfig "$DIR/kubeconfig" >/dev/null
+	kubectl --kubeconfig "$DIR/kubeconfig" --namespace magpie "$@"
+}
+
 # ---------------------------------------------------------------- report
 
 cmd_report() {
@@ -755,7 +830,7 @@ cmd_report() {
 # ---------------------------------------------------------------- main
 
 usage() {
-	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -772,6 +847,7 @@ main() {
 	check) cmd_check "$@" ;;
 	uitest) cmd_uitest "$@" ;;
 	report) cmd_report "$@" ;;
+	kubectl) cmd_kubectl "$@" ;;
 	render) # for tests: print the proxy config
 		load "${1:-}"
 		render_proxy

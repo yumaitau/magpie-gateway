@@ -9,9 +9,11 @@ and logged against the person who sent it.
 ## What you need
 
 - `terraform` 1.6 or later, `aws`, `jq`, `openssl` and `curl`.
+  `kubectl` is optional, for `./magpie.sh kubectl`.
 - An AWS CLI profile signed in to the client's account, with rights to
-  create a VPC, ECS, EFS, an internal load balancer, CloudFront, Secrets
-  Manager and IAM roles.
+  create a VPC, an EKS cluster, an internal load balancer, CloudFront and
+  IAM roles. With an existing cluster, the profile also needs Kubernetes
+  admin rights on it through an EKS access entry.
 - Anthropic model access turned on in that account's Bedrock console in
   `ap-southeast-2`.
 - For single sign-on, the `az` CLI signed in to the client's Entra
@@ -21,7 +23,7 @@ and logged against the person who sent it.
 
 ```bash
 ./magpie.sh new acme            # about ten questions
-./magpie.sh up acme             # 15 to 20 minutes the first time
+./magpie.sh up acme             # about 30 minutes the first time
 ./magpie.sh check acme          # live smoke test, including a DLP block
 ./magpie.sh uitest acme         # browser test of the portal against the live stack
 ./magpie.sh connect acme alex   # setup files for one developer
@@ -41,8 +43,12 @@ Gateway (acme), Users and groups. App roles are `Magpie.Owner`,
 README. Send that folder over a channel the client trusts.
 
 Add or remove people with `./magpie.sh key add|remove acme <name>`,
-then `./magpie.sh up acme`. The gateway restarts, which takes about a
-minute, because the portal's SQLite database has one writer.
+then `./magpie.sh up acme`. The pod is replaced, which takes about a
+minute, because the portal's SQLite volume has one writer.
+
+`./magpie.sh kubectl acme <args>` runs kubectl in the `magpie`
+namespace with its own kubeconfig in the engagement folder, for example
+`./magpie.sh kubectl acme logs deploy/magpie -c proxy`.
 
 At the end, `./magpie.sh report acme` downloads the audit log, the AI
 use-case register and the policy export. `./magpie.sh down acme`
@@ -50,17 +56,38 @@ deletes everything after you type the client name.
 
 ## What gets built
 
-One VPC with no NAT gateway. One Fargate task runs the portal and
-agentgateway side by side; the proxy calls the portal's guardrail
-webhook on localhost with a shared token. The portal database is on
-encrypted EFS with AWS Backup turned on. An internal load balancer
-sends `/v1/*` to the proxy and everything else to the portal, and
-refuses the guardrail routes. CloudFront, through a VPC origin, gives
-the HTTPS address, so no domain or certificate is needed.
+Magpie runs on EKS. `new` asks for a cluster name.
 
-The proxy signs Bedrock calls with the task role, which may invoke only
-`au.*` inference profiles and the foundation models in Sydney and
-Melbourne they route to.
+- **Blank:** Terraform creates a VPC (two private and two public
+  subnets, one NAT gateway) and an EKS Auto Mode cluster. Its Kubernetes
+  API answers only the public address of the machine that ran `up`;
+  the next `up` from somewhere else updates that. Expect about US$110 a
+  month for the control plane and NAT gateway, plus the Auto Mode node.
+- **An existing cluster in `ap-southeast-2`:** Magpie installs into the
+  `magpie` namespace. An Auto Mode cluster needs nothing else. Otherwise
+  it needs the `eks-pod-identity-agent` add-on, the AWS Load Balancer
+  Controller (for `TargetGroupBinding`) and an EBS-backed storage class;
+  `new` checks the add-on and asks for the class.
+
+The Helm chart in `deploy/helm/magpie-gateway` runs one pod with two
+containers, the portal and agentgateway. The proxy calls the portal's
+guardrail webhook on localhost with a shared token, so that route is
+never on the network. The portal database is SQLite on an encrypted gp3
+volume, so the pod runs one replica and is replaced, not rolled.
+
+Terraform owns the front door: an internal load balancer in the
+cluster's private subnets, and CloudFront through a VPC origin for the
+HTTPS address, so no domain or certificate is needed. The pod joins the
+load balancer's target groups through `TargetGroupBinding`, which also
+opens the pod ports to the load balancer's security group. `/v1/*` goes
+to the proxy and everything else to the portal; the guardrail routes are
+refused.
+
+The proxy signs Bedrock calls through EKS Pod Identity with a role that
+may invoke only `au.*` inference profiles and the foundation models in
+Sydney and Melbourne they route to. Secrets are Kubernetes Secrets, set
+by Terraform from `engagements/<client>/secrets.env` and kept out of
+plan output.
 
 ## Models and residency
 
