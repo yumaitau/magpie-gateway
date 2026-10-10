@@ -94,7 +94,7 @@ jobs:
           name: magpie-portal-sbom
           path: magpie-portal.cdx.json
       - name: Scan
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: magpie-gateway-portal:ci
           format: table
