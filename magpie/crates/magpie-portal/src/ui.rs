@@ -135,22 +135,35 @@ pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body
 	)
 }
 
-pub fn login_page(oidc_label: &str, break_glass_enabled: bool, error: Option<&str>) -> String {
+pub fn login_page(oidc_enabled: bool, break_glass_enabled: bool, error: Option<&str>) -> String {
 	let error = error
 		.map(|text| format!("<p class=\"banner warn\" role=\"alert\">{}</p>", esc(text)))
 		.unwrap_or_default();
-	let glass = if break_glass_enabled {
-		r#"<h2>Break-glass</h2>
-<p>This account is off unless an operator has enabled it. Use it only when the identity provider is unavailable. The login is audited.</p>
+	let sso = if oidc_enabled {
+		r#"<p>Use your organisation's identity provider.</p>
+<p><a class="button" href="/api/auth/start">Sign in with single sign-on</a></p>"#
+	} else {
+		"<p>Single sign-on is not set up yet. An operator can add Microsoft Entra ID, Okta, Google Workspace or any OIDC issuer.</p>"
+	};
+	let glass = match (break_glass_enabled, oidc_enabled) {
+		(true, sso) => format!(
+			r#"<h2>{heading}</h2>
+<p>{text} The login is audited.</p>
 <form method="post" action="/api/auth/break-glass">
 <label for="username">Username</label>
 <input id="username" name="username" autocomplete="username" required>
 <label for="password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required>
-<button type="submit">Sign in with break-glass</button>
-</form>"#
-	} else {
-		"<h2>Break-glass</h2><p>Break-glass login is disabled.</p>"
+<button type="submit">Sign in as administrator</button>
+</form>"#,
+			heading = if sso { "Break-glass" } else { "Administrator" },
+			text = if sso {
+				"Use this only when the identity provider is unavailable."
+			} else {
+				"Use the administrator password from setup."
+			},
+		),
+		(false, _) => "<h2>Break-glass</h2><p>Break-glass login is disabled.</p>".to_string(),
 	};
 	format!(
 		r##"<!DOCTYPE html>
@@ -167,15 +180,14 @@ pub fn login_page(oidc_label: &str, break_glass_enabled: bool, error: Option<&st
 <p class="mark">Magpie Gateway</p>
 <h1>Sign in</h1>
 {error}
-<p>Use your organisation's identity provider. The portal supports Microsoft Entra ID, Okta, Google Workspace and any generic OIDC issuer, with PKCE.</p>
-<p><a class="button" href="/api/auth/start">{label}</a></p>
+{sso}
 {glass}
 <p class="muted small">SAML 2.0 is not a supported login method. Unsigned assertions are rejected.</p>
 </main>
 </body>
 </html>"##,
-		label = esc(oidc_label),
 		error = error,
+		sso = sso,
 		glass = glass,
 	)
 }

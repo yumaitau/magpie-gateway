@@ -40,9 +40,17 @@ pub struct Config {
 	pub seed_examples: bool,
 	pub mock_idp: bool,
 	pub oidc_kind: OidcProviderKind,
+	/// Empty with an empty `client_id` turns single sign-on off.
 	pub issuer: String,
 	pub client_id: String,
+	/// Confidential clients send this to the token endpoint. Empty for PKCE-only public clients.
+	pub client_secret: String,
 	pub audience: String,
+	/// External base URL, for example `https://magpie.example.com.au`. Empty means use the Host header.
+	pub public_url: String,
+	pub role_map: RoleMap,
+	/// When set, the proxy must send it as `x-magpie-webhook-token` on guardrail and MCP check calls.
+	pub webhook_token: String,
 	pub hmac_secret: String,
 	pub session_secret: String,
 	pub scim_token: String,
@@ -54,7 +62,22 @@ pub struct Config {
 
 struct PendingLogin {
 	challenge: String,
+	verifier: String,
 	nonce: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct Discovery {
+	issuer: String,
+	authorization_endpoint: String,
+	token_endpoint: String,
+	jwks_uri: String,
+}
+
+#[derive(Clone)]
+struct Provider {
+	discovery: Discovery,
+	jwks: identity::JwkSet,
 }
 
 struct IssuedCode {
@@ -67,6 +90,7 @@ struct Inner {
 	codec: SessionCodec,
 	pending: Mutex<HashMap<String, PendingLogin>>,
 	codes: Mutex<HashMap<String, IssuedCode>>,
+	provider: Mutex<Option<Provider>>,
 	directory: Mutex<Directory>,
 	limiter: RateLimiter,
 	config: Config,
@@ -100,6 +124,7 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 			codec,
 			pending: Mutex::new(HashMap::new()),
 			codes: Mutex::new(HashMap::new()),
+			provider: Mutex::new(None),
 			directory: Mutex::new(Directory::default()),
 			limiter: RateLimiter::new(vec![ToolLimit {
 				tool: "example_search".into(),
@@ -112,7 +137,16 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 }
 
 pub fn router(state: AppState) -> Router {
+	let webhooks = Router::new()
+		.route("/guardrails/request", post(guard_request))
+		.route("/guardrails/response", post(guard_response))
+		.route("/mcp/check", post(mcp_check))
+		.route_layer(axum::middleware::from_fn_with_state(
+			state.clone(),
+			webhook_auth,
+		));
 	Router::new()
+		.merge(webhooks)
 		.route("/healthz", get(health))
 		.route("/login", get(login))
 		.route("/api/auth/start", get(auth_start))
@@ -146,9 +180,6 @@ pub fn router(state: AppState) -> Router {
 		.route("/use-cases.csv", get(use_cases_csv).post(use_cases_import))
 		.route("/api/export", get(export_docs))
 		.route("/api/import", post(import_docs))
-		.route("/guardrails/request", post(guard_request))
-		.route("/guardrails/response", post(guard_response))
-		.route("/mcp/check", post(mcp_check))
 		.route("/scim/v2/ServiceProviderConfig", get(scim_config))
 		.route(
 			"/scim/v2/Users",
@@ -177,25 +208,93 @@ async fn health() -> &'static str {
 	"ok"
 }
 
+impl Config {
+	pub fn oidc_enabled(&self) -> bool {
+		self.mock_idp || (!self.issuer.is_empty() && !self.client_id.is_empty())
+	}
+}
+
+fn login_error(state: &AppState, error: &str) -> Response {
+	Html(ui::login_page(
+		state.inner.config.oidc_enabled(),
+		state.inner.config.break_glass.enabled,
+		Some(error),
+	))
+	.into_response()
+}
+
 async fn login(State(state): State<AppState>) -> Html<String> {
 	Html(ui::login_page(
-		"Continue with your identity provider",
+		state.inner.config.oidc_enabled(),
 		state.inner.config.break_glass.enabled,
 		None,
 	))
 }
 
-async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Response {
-	let pkce = start_pkce();
-	let base = public_base(&headers);
-	let redirect = format!("{base}/api/auth/callback");
-	let endpoint = if state.inner.config.mock_idp {
-		format!("{base}/mock-idp/authorize")
+/// Discovery and signing keys, fetched once and again when a key is unknown.
+async fn load_provider(state: &AppState, refresh: bool) -> Result<Provider, String> {
+	if !refresh && let Some(provider) = state.inner.provider.lock().expect("provider").clone() {
+		return Ok(provider);
+	}
+	let config = &state.inner.config;
+	let issuer = issuer_for(config.oidc_kind, &config.issuer);
+	let client = reqwest::Client::builder()
+		.timeout(Duration::from_secs(10))
+		.build()
+		.map_err(|error| error.to_string())?;
+	let discovery: Discovery = client
+		.get(format!(
+			"{}/.well-known/openid-configuration",
+			issuer.trim_end_matches('/')
+		))
+		.send()
+		.await
+		.and_then(|response| response.error_for_status())
+		.map_err(|error| format!("OIDC discovery failed: {error}"))?
+		.json()
+		.await
+		.map_err(|error| format!("OIDC discovery failed: {error}"))?;
+	let jwks = client
+		.get(&discovery.jwks_uri)
+		.send()
+		.await
+		.and_then(|response| response.error_for_status())
+		.map_err(|error| format!("OIDC signing keys failed: {error}"))?
+		.json()
+		.await
+		.map_err(|error| format!("OIDC signing keys failed: {error}"))?;
+	let provider = Provider { discovery, jwks };
+	*state.inner.provider.lock().expect("provider") = Some(provider.clone());
+	Ok(provider)
+}
+
+fn redirect_uri(state: &AppState, headers: &HeaderMap) -> String {
+	let base = if state.inner.config.public_url.is_empty() {
+		public_base(headers)
 	} else {
-		format!(
-			"{}/authorize",
-			issuer_for(state.inner.config.oidc_kind, &state.inner.config.issuer).trim_end_matches('/')
-		)
+		state
+			.inner
+			.config
+			.public_url
+			.trim_end_matches('/')
+			.to_string()
+	};
+	format!("{base}/api/auth/callback")
+}
+
+async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Response {
+	if !state.inner.config.oidc_enabled() {
+		return login_error(&state, "Single sign-on is not set up on this portal.");
+	}
+	let pkce = start_pkce();
+	let redirect = redirect_uri(&state, &headers);
+	let endpoint = if state.inner.config.mock_idp {
+		format!("{}/mock-idp/authorize", public_base(&headers))
+	} else {
+		match load_provider(&state, false).await {
+			Ok(provider) => provider.discovery.authorization_endpoint,
+			Err(error) => return login_error(&state, &error),
+		}
 	};
 	let url = identity::authorisation_url(
 		&endpoint,
@@ -208,6 +307,7 @@ async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Respon
 		pkce.state.clone(),
 		PendingLogin {
 			challenge: pkce.challenge,
+			verifier: pkce.verifier,
 			nonce: pkce.nonce,
 		},
 	);
@@ -219,36 +319,37 @@ async fn auth_callback(
 	headers: HeaderMap,
 	axum::extract::Query(query): axum::extract::Query<CallbackQuery>,
 ) -> Response {
+	if let Some(error) = &query.error {
+		let detail = query.error_description.as_deref().unwrap_or(error);
+		return login_error(
+			&state,
+			&format!("The identity provider refused the login: {detail}"),
+		);
+	}
+	let (Some(code), Some(login_state)) = (query.code.as_deref(), query.state.as_deref()) else {
+		return login_error(&state, "The identity provider did not return a code.");
+	};
 	let pending = state
 		.inner
 		.pending
 		.lock()
 		.expect("pending")
-		.remove(&query.state);
+		.remove(login_state);
 	let Some(pending) = pending else {
-		return Html(ui::login_page(
-			"Continue",
-			state.inner.config.break_glass.enabled,
-			Some("This login attempt has expired."),
-		))
-		.into_response();
+		return login_error(&state, "This login attempt has expired.");
 	};
-	let issued = state.inner.codes.lock().expect("codes").remove(&query.code);
+	if !state.inner.config.mock_idp {
+		return match oidc_exchange(&state, &headers, code, &pending).await {
+			Ok(claims) => finish_login(&state, &headers, &claims, false),
+			Err(error) => login_error(&state, &error),
+		};
+	}
+	let issued = state.inner.codes.lock().expect("codes").remove(code);
 	let Some(issued) = issued else {
-		return Html(ui::login_page(
-			"Continue",
-			false,
-			Some("The identity provider did not return a known code."),
-		))
-		.into_response();
+		return login_error(&state, "The identity provider did not return a known code.");
 	};
 	if issued.challenge != pending.challenge {
-		return Html(ui::login_page(
-			"Continue",
-			false,
-			Some("PKCE check failed."),
-		))
-		.into_response();
+		return login_error(&state, "PKCE check failed.");
 	}
 	let claims = match verify_hs256(
 		&issued_token(&state, &issued),
@@ -258,10 +359,81 @@ async fn auth_callback(
 	) {
 		Ok(claims) => claims,
 		Err(error) => {
-			return Html(ui::login_page("Continue", false, Some(&error.to_string()))).into_response();
+			return login_error(&state, &error.to_string());
 		},
 	};
 	finish_login(&state, &headers, &claims, false)
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+	id_token: String,
+}
+
+/// Authorisation-code exchange with the PKCE verifier, then ID token checks.
+async fn oidc_exchange(
+	state: &AppState,
+	headers: &HeaderMap,
+	code: &str,
+	pending: &PendingLogin,
+) -> Result<IdClaims, String> {
+	let config = &state.inner.config;
+	let provider = load_provider(state, false).await?;
+	let redirect = redirect_uri(state, headers);
+	let mut form = vec![
+		("grant_type", "authorization_code"),
+		("code", code),
+		("redirect_uri", redirect.as_str()),
+		("client_id", config.client_id.as_str()),
+		("code_verifier", pending.verifier.as_str()),
+	];
+	if !config.client_secret.is_empty() {
+		form.push(("client_secret", config.client_secret.as_str()));
+	}
+	let client = reqwest::Client::builder()
+		.timeout(Duration::from_secs(10))
+		.build()
+		.map_err(|error| error.to_string())?;
+	let response = client
+		.post(&provider.discovery.token_endpoint)
+		.form(&form)
+		.send()
+		.await
+		.map_err(|error| format!("Token exchange failed: {error}"))?;
+	if !response.status().is_success() {
+		let status = response.status();
+		let body = response.text().await.unwrap_or_default();
+		let reason = serde_json::from_str::<Value>(&body)
+			.ok()
+			.and_then(|value| {
+				value
+					.get("error")
+					.and_then(Value::as_str)
+					.map(str::to_string)
+			})
+			.unwrap_or_else(|| status.to_string());
+		return Err(format!("Token exchange failed: {reason}"));
+	}
+	let token: TokenResponse = response
+		.json()
+		.await
+		.map_err(|error| format!("Token exchange failed: {error}"))?;
+	let verify = |provider: &Provider| {
+		identity::verify_with_jwks(
+			&token.id_token,
+			&provider.jwks,
+			&provider.discovery.issuer,
+			&config.client_id,
+			Some(&pending.nonce),
+		)
+	};
+	match verify(&provider) {
+		Ok(claims) => Ok(claims),
+		Err(error) if error.to_string().contains("No identity provider key") => {
+			verify(&load_provider(state, true).await?).map_err(|error| error.to_string())
+		},
+		Err(error) => Err(error.to_string()),
+	}
 }
 
 fn issued_token(state: &AppState, issued: &IssuedCode) -> String {
@@ -277,11 +449,16 @@ fn finish_login(
 ) -> Response {
 	let mut groups = claims.groups.clone();
 	groups.extend(claims.roles.clone());
-	let roles = roles_from_groups(&groups, &RoleMap::default());
+	let roles = roles_from_groups(&groups, &state.inner.config.role_map);
 	let now = Utc::now();
+	let email = claims
+		.email
+		.as_deref()
+		.or(claims.preferred_username.as_deref())
+		.unwrap_or("");
 	let (record, cookie) = match state.inner.codec.issue(
 		&claims.sub,
-		claims.email.as_deref().unwrap_or(""),
+		email,
 		claims.name.as_deref().unwrap_or(&claims.sub),
 		roles,
 		now,
@@ -289,7 +466,7 @@ fn finish_login(
 	) {
 		Ok(pair) => pair,
 		Err(error) => {
-			return Html(ui::login_page("Continue", false, Some(&error.to_string()))).into_response();
+			return login_error(state, &error.to_string());
 		},
 	};
 	let _ = state.inner.store.lock().expect("db").put_session(
@@ -417,17 +594,13 @@ async fn break_glass_login(
 			"block",
 			"break-glass rejected",
 		);
-		return Html(ui::login_page(
-			"Continue",
-			state.inner.config.break_glass.enabled,
-			Some(&error.to_string()),
-		))
-		.into_response();
+		return login_error(&state, &error.to_string());
 	}
 	let claims = IdClaims {
 		sub: form.username.clone(),
 		email: Some(format!("{}@local.invalid", form.username)),
 		name: Some("Break-glass".into()),
+		preferred_username: None,
 		groups: vec!["magpie-owners".into()],
 		roles: vec![],
 		nonce: None,
@@ -1813,6 +1986,21 @@ async fn fetch_presidio(url: &str, text: &str) -> Result<Vec<PresidioEntity>, St
 	presidio::parse_analyzer_response(&body).map_err(|error| error.to_string())
 }
 
+/// Guardrail and MCP check calls come from the proxy, which sends the shared token.
+async fn webhook_auth(
+	State(state): State<AppState>,
+	request: axum::extract::Request,
+	next: axum::middleware::Next,
+) -> Response {
+	let expected = &state.inner.config.webhook_token;
+	let presented = header_str(request.headers(), "x-magpie-webhook-token").unwrap_or("");
+	if !expected.is_empty() && !identity::constant_time_eq(presented.as_bytes(), expected.as_bytes())
+	{
+		return (StatusCode::UNAUTHORIZED, "webhook token required").into_response();
+	}
+	next.run(request).await
+}
+
 #[allow(clippy::result_large_err)]
 fn scim_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 	let presented = headers
@@ -1820,8 +2008,10 @@ fn scim_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 		.and_then(|value| value.to_str().ok())
 		.and_then(|value| value.strip_prefix("Bearer "));
 	if state.inner.config.scim_token.is_empty()
-		|| presented != Some(state.inner.config.scim_token.as_str())
-	{
+		|| !identity::constant_time_eq(
+			presented.unwrap_or("").as_bytes(),
+			state.inner.config.scim_token.as_bytes(),
+		) {
 		return Err((StatusCode::UNAUTHORIZED, "SCIM bearer token required").into_response());
 	}
 	Ok(())
@@ -2473,6 +2663,7 @@ fn mock_claims(who: &str, nonce: &str, audience: &str) -> Option<IdClaims> {
 		sub: sub.into(),
 		email: Some(email.into()),
 		name: Some(name.into()),
+		preferred_username: None,
 		groups,
 		roles: vec![],
 		nonce: Some(nonce.into()),
@@ -2488,7 +2679,12 @@ fn public_base(headers: &HeaderMap) -> String {
 		.get(header::HOST)
 		.and_then(|value| value.to_str().ok())
 		.unwrap_or("127.0.0.1");
-	format!("http://{host}")
+	let scheme = headers
+		.get("x-forwarded-proto")
+		.and_then(|value| value.to_str().ok())
+		.filter(|value| *value == "https")
+		.unwrap_or("http");
+	format!("{scheme}://{host}")
 }
 
 fn session_cookie(value: &str, secure: bool) -> String {
@@ -2521,6 +2717,8 @@ fn metadata_from(headers: &HeaderMap) -> std::collections::BTreeMap<String, Stri
 
 #[derive(Deserialize)]
 struct CallbackQuery {
-	code: String,
-	state: String,
+	code: Option<String>,
+	state: Option<String>,
+	error: Option<String>,
+	error_description: Option<String>,
 }

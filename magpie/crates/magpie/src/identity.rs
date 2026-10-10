@@ -14,6 +14,8 @@ use sha2::Sha256;
 
 use crate::{Error, Result};
 
+pub use jsonwebtoken::jwk::JwkSet;
+
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +112,34 @@ impl Default for RoleMap {
 			approver_groups: vec!["magpie-approvers".into()],
 			auditor_groups: vec!["magpie-auditors".into()],
 			viewer_groups: vec!["magpie-viewers".into()],
+		}
+	}
+}
+
+impl RoleMap {
+	/// Add group IDs or app-role values from `MAGPIE_ROLE_*` settings.
+	///
+	/// Each value is a comma-separated list. The defaults stay, so an
+	/// IdP group named `magpie-owners` still maps to Owner.
+	pub fn extend_from(&mut self, lookup: impl Fn(&str) -> Option<String>) {
+		let lists = [
+			("MAGPIE_ROLE_OWNERS", &mut self.owner_groups),
+			("MAGPIE_ROLE_ADMINS", &mut self.admin_groups),
+			("MAGPIE_ROLE_POLICY_EDITORS", &mut self.policy_editor_groups),
+			("MAGPIE_ROLE_APPROVERS", &mut self.approver_groups),
+			("MAGPIE_ROLE_AUDITORS", &mut self.auditor_groups),
+			("MAGPIE_ROLE_VIEWERS", &mut self.viewer_groups),
+		];
+		for (name, groups) in lists {
+			if let Some(value) = lookup(name) {
+				groups.extend(
+					value
+						.split(',')
+						.map(str::trim)
+						.filter(|item| !item.is_empty())
+						.map(str::to_string),
+				);
+			}
 		}
 	}
 }
@@ -222,6 +252,9 @@ pub struct IdClaims {
 	pub sub: String,
 	pub email: Option<String>,
 	pub name: Option<String>,
+	/// Entra ID puts the sign-in name here and often omits `email`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub preferred_username: Option<String>,
 	#[serde(default)]
 	pub groups: Vec<String>,
 	#[serde(default)]
@@ -258,6 +291,51 @@ pub fn verify_hs256(
 		&validation,
 	)
 	.map_err(|error| Error::Msg(error.to_string()))?;
+	if let Some(expected) = expected_nonce
+		&& data.claims.nonce.as_deref() != Some(expected)
+	{
+		return Err(Error::Msg(
+			"OIDC nonce did not match the login attempt.".into(),
+		));
+	}
+	Ok(data.claims)
+}
+
+/// Verify an ID or logout token signed by an identity provider key.
+///
+/// Only asymmetric algorithms are accepted, so a token cannot be signed
+/// with a published key used as an HMAC secret.
+pub fn verify_with_jwks(
+	token: &str,
+	jwks: &JwkSet,
+	issuer: &str,
+	audience: &str,
+	expected_nonce: Option<&str>,
+) -> Result<IdClaims> {
+	use jsonwebtoken::Algorithm::*;
+	let header = jsonwebtoken::decode_header(token).map_err(|error| Error::Msg(error.to_string()))?;
+	if !matches!(
+		header.alg,
+		RS256 | RS384 | RS512 | PS256 | PS384 | PS512 | ES256 | ES384 | EdDSA
+	) {
+		return Err(Error::Msg(format!(
+			"ID token algorithm {:?} is not accepted.",
+			header.alg
+		)));
+	}
+	let jwk = match &header.kid {
+		Some(kid) => jwks.find(kid),
+		None if jwks.keys.len() == 1 => jwks.keys.first(),
+		None => None,
+	}
+	.ok_or_else(|| Error::Msg("No identity provider key matches the token.".into()))?;
+	let key =
+		jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|error| Error::Msg(error.to_string()))?;
+	let mut validation = jsonwebtoken::Validation::new(header.alg);
+	validation.set_audience(&[audience]);
+	validation.set_issuer(&[issuer]);
+	let data = jsonwebtoken::decode::<IdClaims>(token, &key, &validation)
+		.map_err(|error| Error::Msg(error.to_string()))?;
 	if let Some(expected) = expected_nonce
 		&& data.claims.nonce.as_deref() != Some(expected)
 	{
@@ -380,7 +458,7 @@ impl SessionCodec {
 	fn unseal(&self, cookie: &str) -> Result<SessionRecord> {
 		let (encoded, mac) = cookie.split_once('.').ok_or_else(|| Error::Unauthorised)?;
 		let expected = sign(&self.secret, encoded.as_bytes());
-		if !constant_eq(mac.as_bytes(), expected.as_bytes()) {
+		if !constant_time_eq(mac.as_bytes(), expected.as_bytes()) {
 			return Err(Error::Unauthorised);
 		}
 		let body = URL_SAFE_NO_PAD
@@ -397,7 +475,7 @@ fn sign(secret: &[u8], body: &[u8]) -> String {
 	URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn constant_eq(left: &[u8], right: &[u8]) -> bool {
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 	if left.len() != right.len() {
 		return false;
 	}
@@ -425,8 +503,21 @@ impl Default for BreakGlassConfig {
 	}
 }
 
+const WEAK_ADMIN_PASSWORDS: &[&str] = &["change-me", "dev-only-change-me", "magpie-example-key"];
+
+/// Why an admin password is refused, if it is.
+pub fn admin_password_problem(password: &str) -> Option<&'static str> {
+	if WEAK_ADMIN_PASSWORDS.contains(&password) {
+		return Some("The admin password is a published default.");
+	}
+	if password.chars().count() < 16 {
+		return Some("The admin password must be at least 16 characters.");
+	}
+	None
+}
+
 pub fn hash_password(password: &str) -> Result<String> {
-	bcrypt::hash(password, 4).map_err(|error| Error::Msg(error.to_string()))
+	bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|error| Error::Msg(error.to_string()))
 }
 
 pub fn verify_break_glass(config: &BreakGlassConfig, username: &str, password: &str) -> Result<()> {
@@ -539,6 +630,7 @@ mod tests {
 			sub: "user-1".into(),
 			email: Some("alex@example.gov.au".into()),
 			name: Some("Alex".into()),
+			preferred_username: None,
 			groups: vec!["magpie-admins".into()],
 			roles: vec![],
 			nonce: Some("nonce-1".into()),
@@ -554,6 +646,119 @@ mod tests {
 		let mut logout = claims.clone();
 		logout.events = serde_json::json!({ BACK_CHANNEL_EVENT: {} });
 		assert_eq!(logout_subject(&logout).unwrap(), "user-1");
+	}
+
+	#[test]
+	fn role_map_extends_from_settings() {
+		let mut map = RoleMap::default();
+		map.extend_from(|name| match name {
+			"MAGPIE_ROLE_OWNERS" => Some("1b2c-group, Magpie.Owner".into()),
+			_ => None,
+		});
+		assert_eq!(
+			roles_from_groups(&["Magpie.Owner".into()], &map),
+			vec![Role::Owner]
+		);
+		assert_eq!(
+			roles_from_groups(&["magpie-owners".into()], &map),
+			vec![Role::Owner]
+		);
+		assert_eq!(
+			roles_from_groups(&["other".into()], &map),
+			vec![Role::Viewer]
+		);
+	}
+
+	#[test]
+	fn weak_admin_passwords_are_refused() {
+		assert!(admin_password_problem("change-me").is_some());
+		assert!(admin_password_problem("short").is_some());
+		assert!(admin_password_problem("a-long-generated-password-1").is_none());
+	}
+
+	const TEST_RSA_PRIVATE: &str = include_str!("../tests/fixtures/oidc-test-key.pem");
+	const TEST_RSA_N: &str = include_str!("../tests/fixtures/oidc-test-key.n");
+
+	fn signed(claims: &IdClaims, kid: &str) -> String {
+		let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+		header.kid = Some(kid.into());
+		jsonwebtoken::encode(
+			&header,
+			claims,
+			&jsonwebtoken::EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE.as_bytes()).unwrap(),
+		)
+		.unwrap()
+	}
+
+	fn test_jwks() -> jsonwebtoken::jwk::JwkSet {
+		serde_json::from_value(serde_json::json!({
+			"keys": [{"kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256", "n": TEST_RSA_N.trim(), "e": "AQAB"}]
+		}))
+		.unwrap()
+	}
+
+	fn entra_claims() -> IdClaims {
+		IdClaims {
+			sub: "user-1".into(),
+			email: None,
+			name: Some("Alex".into()),
+			preferred_username: Some("alex@example.com.au".into()),
+			groups: vec![],
+			roles: vec!["Magpie.Owner".into()],
+			nonce: Some("nonce-1".into()),
+			iss: "https://login.example/tenant/v2.0".into(),
+			aud: serde_json::json!("client-1"),
+			exp: (Utc::now() + chrono::Duration::minutes(5)).timestamp() as usize,
+			events: serde_json::json!({}),
+		}
+	}
+
+	#[test]
+	fn jwks_verification_checks_key_issuer_audience_and_nonce() {
+		let jwks = test_jwks();
+		let issuer = "https://login.example/tenant/v2.0";
+		let token = signed(&entra_claims(), "k1");
+		let claims = verify_with_jwks(&token, &jwks, issuer, "client-1", Some("nonce-1")).unwrap();
+		assert_eq!(
+			claims.preferred_username.as_deref(),
+			Some("alex@example.com.au")
+		);
+		assert!(verify_with_jwks(&token, &jwks, issuer, "client-2", Some("nonce-1")).is_err());
+		assert!(verify_with_jwks(&token, &jwks, "https://evil.example", "client-1", None).is_err());
+		assert!(verify_with_jwks(&token, &jwks, issuer, "client-1", Some("other")).is_err());
+		assert!(
+			verify_with_jwks(
+				&signed(&entra_claims(), "k2"),
+				&jwks,
+				issuer,
+				"client-1",
+				None
+			)
+			.is_err()
+		);
+	}
+
+	#[test]
+	fn jwks_verification_refuses_hmac_tokens() {
+		let mut claims = entra_claims();
+		claims.nonce = None;
+		let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+		header.kid = Some("k1".into());
+		let token = jsonwebtoken::encode(
+			&header,
+			&claims,
+			&jsonwebtoken::EncodingKey::from_secret(TEST_RSA_N.trim().as_bytes()),
+		)
+		.unwrap();
+		let error = verify_with_jwks(
+			&token,
+			&test_jwks(),
+			"https://login.example/tenant/v2.0",
+			"client-1",
+			None,
+		)
+		.unwrap_err();
+		assert!(error.to_string().contains("not accepted"), "{error}");
 	}
 
 	#[test]

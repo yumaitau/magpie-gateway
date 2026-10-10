@@ -1,42 +1,99 @@
 use std::time::Duration;
 
-use magpie::identity::{BreakGlassConfig, OidcProviderKind, hash_password};
+use magpie::identity::{
+	BreakGlassConfig, OidcProviderKind, RoleMap, admin_password_problem, hash_password,
+};
+
+fn env(name: &str) -> Option<String> {
+	std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn flag(name: &str) -> bool {
+	env(name).as_deref() == Some("1")
+}
+
+fn fail(message: &str) -> ! {
+	eprintln!("{message}");
+	std::process::exit(1);
+}
 
 #[tokio::main]
 async fn main() {
-	let database = std::env::var("MAGPIE_DATABASE_URL").unwrap_or_else(|_| "magpie.sqlite".into());
-	let demo = std::env::var("MAGPIE_DEMO").ok().as_deref() == Some("1");
-	let supplied = std::env::var("MAGPIE_SESSION_SECRET").ok();
-	let secret = magpie::resolve_session_secret(supplied.as_deref(), demo).unwrap_or_else(|error| {
-		eprintln!("{error}");
-		std::process::exit(1);
-	});
+	let database = env("MAGPIE_DATABASE_URL").unwrap_or_else(|| "magpie.sqlite".into());
+	let demo = flag("MAGPIE_DEMO");
+	let mock_idp = flag("MAGPIE_MOCK_IDP");
+	let secret = magpie::resolve_session_secret(env("MAGPIE_SESSION_SECRET").as_deref(), demo)
+		.unwrap_or_else(|error| fail(&error.to_string()));
+
+	// MAGPIE_ADMIN_PASSWORD turns on the local administrator. MAGPIE_BREAK_GLASS=1
+	// is the older switch and now needs MAGPIE_BREAK_GLASS_PASSWORD as well.
 	let mut break_glass = BreakGlassConfig::default();
-	if std::env::var("MAGPIE_BREAK_GLASS").ok().as_deref() == Some("1") {
-		let password =
-			std::env::var("MAGPIE_BREAK_GLASS_PASSWORD").unwrap_or_else(|_| "change-me".into());
+	let password = match (env("MAGPIE_ADMIN_PASSWORD"), flag("MAGPIE_BREAK_GLASS")) {
+		(Some(password), _) => {
+			break_glass.username = env("MAGPIE_ADMIN_USER").unwrap_or_else(|| "admin".into());
+			Some(password)
+		},
+		(None, true) => Some(env("MAGPIE_BREAK_GLASS_PASSWORD").unwrap_or_else(|| {
+			fail("MAGPIE_BREAK_GLASS=1 needs MAGPIE_BREAK_GLASS_PASSWORD. There is no default password.")
+		})),
+		(None, false) => None,
+	};
+	if let Some(password) = password {
+		if let Some(problem) = admin_password_problem(&password) {
+			fail(problem);
+		}
 		break_glass.enabled = true;
-		break_glass.password_hash = hash_password(&password).expect("hash");
+		break_glass.password_hash =
+			hash_password(&password).unwrap_or_else(|error| fail(&error.to_string()));
 	}
+
+	// MAGPIE_ENTRA_TENANT_ID is a shortcut for the Entra v2.0 issuer.
+	let (oidc_kind, issuer) = match (env("MAGPIE_ENTRA_TENANT_ID"), env("MAGPIE_OIDC_ISSUER")) {
+		(Some(tenant), _) => (OidcProviderKind::Entra, tenant),
+		(None, Some(issuer)) => (OidcProviderKind::Generic, issuer),
+		(None, None) if mock_idp => (
+			OidcProviderKind::Generic,
+			"https://login.example/mock".into(),
+		),
+		(None, None) => (OidcProviderKind::Generic, String::new()),
+	};
+	let client_id = env("MAGPIE_OIDC_CLIENT_ID").unwrap_or_else(|| {
+		if mock_idp {
+			"magpie".into()
+		} else {
+			String::new()
+		}
+	});
+	let mut role_map = RoleMap::default();
+	role_map.extend_from(env);
+
 	let config = magpie_portal::Config {
 		database_path: database,
-		cookie_secure: std::env::var("MAGPIE_COOKIE_SECURE").ok().as_deref() != Some("0"),
+		cookie_secure: env("MAGPIE_COOKIE_SECURE").as_deref() != Some("0"),
 		demo,
-		seed_examples: std::env::var("MAGPIE_SEED_EXAMPLES").ok().as_deref() == Some("1"),
-		mock_idp: std::env::var("MAGPIE_MOCK_IDP").ok().as_deref() == Some("1"),
-		oidc_kind: OidcProviderKind::Generic,
-		issuer: std::env::var("MAGPIE_OIDC_ISSUER")
-			.unwrap_or_else(|_| "https://login.example/mock".into()),
-		client_id: std::env::var("MAGPIE_OIDC_CLIENT_ID").unwrap_or_else(|_| "magpie".into()),
-		audience: std::env::var("MAGPIE_OIDC_AUDIENCE").unwrap_or_else(|_| "magpie".into()),
+		seed_examples: flag("MAGPIE_SEED_EXAMPLES"),
+		mock_idp,
+		oidc_kind,
+		issuer,
+		audience: env("MAGPIE_OIDC_AUDIENCE").unwrap_or_else(|| client_id.clone()),
+		client_id,
+		client_secret: env("MAGPIE_OIDC_CLIENT_SECRET").unwrap_or_default(),
+		public_url: env("MAGPIE_PUBLIC_URL").unwrap_or_default(),
+		role_map,
+		webhook_token: env("MAGPIE_WEBHOOK_TOKEN").unwrap_or_default(),
 		hmac_secret: secret.clone(),
 		session_secret: secret,
-		scim_token: std::env::var("MAGPIE_SCIM_TOKEN").unwrap_or_default(),
+		scim_token: env("MAGPIE_SCIM_TOKEN").unwrap_or_default(),
 		break_glass,
 		idle: Duration::from_secs(30 * 60),
 		absolute: Duration::from_secs(12 * 60 * 60),
-		listen: std::env::var("MAGPIE_LISTEN").unwrap_or_else(|_| "127.0.0.1:8088".into()),
+		listen: env("MAGPIE_LISTEN").unwrap_or_else(|| "127.0.0.1:8088".into()),
 	};
+	if !config.oidc_enabled() && !config.break_glass.enabled && !demo {
+		fail(
+			"No way to sign in. Set MAGPIE_ADMIN_PASSWORD, or MAGPIE_OIDC_ISSUER (or MAGPIE_ENTRA_TENANT_ID) with MAGPIE_OIDC_CLIENT_ID.",
+		);
+	}
 	let listen = config.listen.clone();
 	let state = magpie_portal::state(config).expect("database");
 	let app = magpie_portal::router(state);
