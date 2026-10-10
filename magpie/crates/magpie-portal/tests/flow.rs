@@ -622,7 +622,8 @@ async fn enabled_break_glass_login_is_audited() {
 		.send()
 		.await
 		.expect("login");
-	assert!(response.status().is_redirection());
+	// 303, so the browser follows with GET. A 307 made it POST to /dashboard.
+	assert_eq!(response.status(), StatusCode::SEE_OTHER);
 	let dashboard = client
 		.get(format!("{base}/dashboard"))
 		.send()
@@ -630,4 +631,44 @@ async fn enabled_break_glass_login_is_audited() {
 		.expect("dashboard");
 	let html = dashboard.text().await.expect("html");
 	assert!(html.contains("Break-glass session"));
+	let saved = client
+		.post(format!("{base}/settings"))
+		.form(&[
+			("sovereign", "true"),
+			("telemetry", "false"),
+			("presidio", ""),
+			("retention", "365"),
+			("kill_global", "false"),
+			("kill_agent", "example-agent"),
+		])
+		.send()
+		.await
+		.expect("settings");
+	assert_eq!(saved.status(), StatusCode::SEE_OTHER);
+	let cleared = client
+		.post(format!("{base}/settings"))
+		.form(&[
+			("sovereign", "true"),
+			("telemetry", "false"),
+			("presidio", ""),
+			("retention", "365"),
+			("kill_global", "false"),
+			("kill_agent", ""),
+		])
+		.send()
+		.await
+		.expect("settings");
+	assert_eq!(cleared.status(), StatusCode::SEE_OTHER);
+	let html = client
+		.get(format!("{base}/settings"))
+		.send()
+		.await
+		.expect("settings page")
+		.text()
+		.await
+		.expect("html");
+	assert!(
+		!html.contains("value=\"example-agent\""),
+		"kill switch not cleared"
+	);
 }

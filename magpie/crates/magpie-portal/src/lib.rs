@@ -317,7 +317,7 @@ async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Respon
 			nonce: pkce.nonce,
 		},
 	);
-	Redirect::temporary(&url).into_response()
+	Redirect::to(&url).into_response()
 }
 
 async fn auth_callback(
@@ -495,7 +495,7 @@ fn finish_login(
 			"oidc login"
 		},
 	);
-	let mut response = Redirect::temporary("/dashboard").into_response();
+	let mut response = Redirect::to("/dashboard").into_response();
 	let _ = headers;
 	response.headers_mut().insert(
 		header::SET_COOKIE,
@@ -525,7 +525,7 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
 			"logout",
 		);
 	}
-	let mut response = Redirect::temporary("/login").into_response();
+	let mut response = Redirect::to("/login").into_response();
 	response.headers_mut().insert(
 		header::SET_COOKIE,
 		"magpie_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
@@ -691,7 +691,7 @@ async fn mock_continue(
 		.expect("codes")
 		.insert(code.clone(), IssuedCode { challenge, claims });
 	let base = public_base(&headers);
-	Redirect::temporary(&format!(
+	Redirect::to(&format!(
 		"{base}/api/auth/callback?code={code}&state={}",
 		form.state
 	))
@@ -720,13 +720,13 @@ fn session_from(
 	state: &AppState,
 	headers: &HeaderMap,
 ) -> Result<(SessionRecord, String), Response> {
-	let cookie = read_cookie(headers, "magpie_session")
-		.ok_or_else(|| Redirect::temporary("/login").into_response())?;
+	let cookie =
+		read_cookie(headers, "magpie_session").ok_or_else(|| Redirect::to("/login").into_response())?;
 	let opened = state
 		.inner
 		.codec
 		.open(&cookie, Utc::now())
-		.map_err(|_| Redirect::temporary("/login").into_response())?;
+		.map_err(|_| Redirect::to("/login").into_response())?;
 	let stored = state
 		.inner
 		.store
@@ -736,13 +736,13 @@ fn session_from(
 		.ok()
 		.flatten();
 	if stored.is_none() {
-		return Err(Redirect::temporary("/login").into_response());
+		return Err(Redirect::to("/login").into_response());
 	}
 	let (touched, resealed) = state
 		.inner
 		.codec
 		.touch(opened, Utc::now())
-		.map_err(|_| Redirect::temporary("/login").into_response())?;
+		.map_err(|_| Redirect::to("/login").into_response())?;
 	let _ = state.inner.store.lock().expect("db").put_session(
 		&touched.session_id,
 		&touched.subject,
@@ -1423,7 +1423,7 @@ async fn approve(
 		"allow",
 		"approved",
 	);
-	Redirect::temporary("/approvals").into_response()
+	Redirect::to("/approvals").into_response()
 }
 
 #[derive(Deserialize)]
@@ -1494,7 +1494,7 @@ async fn approvals_post(
 		"allow",
 		"queued",
 	);
-	Redirect::temporary("/approvals").into_response()
+	Redirect::to("/approvals").into_response()
 }
 
 async fn approve_revision(
@@ -1541,7 +1541,7 @@ async fn approve_revision(
 		"allow",
 		"revision approved",
 	);
-	Redirect::temporary("/policies").into_response()
+	Redirect::to("/policies").into_response()
 }
 
 async fn rollback_revision(
@@ -1588,7 +1588,7 @@ async fn rollback_revision(
 		"allow",
 		"revision rolled back",
 	);
-	Redirect::temporary("/policies").into_response()
+	Redirect::to("/policies").into_response()
 }
 
 async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -1701,7 +1701,7 @@ async fn settings_post(
 		"allow",
 		"settings updated",
 	);
-	Redirect::temporary("/settings").into_response()
+	Redirect::to("/settings").into_response()
 }
 
 async fn use_cases_csv(State(state): State<AppState>, headers: HeaderMap) -> Response {
