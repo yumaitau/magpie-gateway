@@ -153,12 +153,16 @@ dashboard and cannot export full logs.
 ### Change control
 
 Policy, DLP, route and catalogue writes create a revision: actor, time,
-JSON patch, and the previous document. A second person can be required
-before the revision becomes active. Rollback writes another revision
-that restores the previous document. The store is SQLite for a single
-node. The same schema is shipped for Postgres and selected when the
-URL starts with `postgres://` or `postgresql://`. GitOps export and
-import is a JSON bundle of the active documents.
+a field diff, and the previous document. When second-person approval is
+on, the revision stays pending until a different user approves it.
+Rollback writes another revision that restores the previous document.
+The kill switch is the exception: it is written straight away.
+
+The running store is SQLite, including for a single node. `POSTGRES_SCHEMA`
+is the same tables, with a trigger function that rejects audit updates
+and deletes. A `postgres://` URL is refused. There is no Postgres query
+adapter in this cut. GitOps export and import is a JSON bundle of the
+active documents. Use-case rows import and export as CSV.
 
 ### Approvals and the use-case register
 

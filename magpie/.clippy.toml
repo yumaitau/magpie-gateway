@@ -1,0 +1,2 @@
+# Magpie clippy config. The proxy disallowed-method list is not used here.
+cognitive-complexity-threshold = 30

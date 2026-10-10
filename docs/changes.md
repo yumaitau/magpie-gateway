@@ -10,7 +10,9 @@ Upstream agentgateway is unmodified apart from the fork notice in
 | `docs/upstream-sync.md` | How to merge `upstream/main` |
 | `docs/UPSTREAM` | Pinned upstream commit |
 | `docs/changes.md` | This list |
-| `magpie/` | Policy library: DLP, PSPF, sovereignty, approvals, CEL, identity, SCIM, audit, evidence |
+| `magpie/` | Policy library and the admin portal |
 
-Later commits add `magpie/`, `deploy/`, `detections/` and the Magpie
-workflows. Those commits update this table.
+The portal crate is `magpie/crates/magpie-portal`. It serves the pages,
+the mock identity provider, SCIM and the guardrail webhook. Deployment
+examples, detection content and the Magpie CI workflow are added in
+later commits.
