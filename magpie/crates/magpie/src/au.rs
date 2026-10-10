@@ -236,8 +236,14 @@ fn digit_runs(text: &str) -> Vec<Run> {
 }
 
 fn window(text: &str, start: usize, end: usize) -> String {
-	let from = start.saturating_sub(64);
-	let to = (end + 64).min(text.len());
+	let mut from = start.saturating_sub(64);
+	while !text.is_char_boundary(from) {
+		from -= 1;
+	}
+	let mut to = (end + 64).min(text.len());
+	while !text.is_char_boundary(to) {
+		to += 1;
+	}
 	text[from..to].to_ascii_lowercase()
 }
 
@@ -436,11 +442,17 @@ fn scan_mrz(text: &str, hits: &mut Vec<AuHit>) {
 	let bytes = text.as_bytes();
 	let mut index = 0;
 	while index + 10 <= bytes.len() {
-		let field = &text[index..index + 9];
+		let field_bytes = &bytes[index..index + 9];
 		let check = bytes[index + 9];
-		let field_ok = field.chars().all(|character| {
-			character.is_ascii_uppercase() || character.is_ascii_digit() || character == '<'
-		});
+		// Check bytes first: slicing the str here could split a multi-byte character.
+		let field_ok = field_bytes
+			.iter()
+			.all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'<');
+		let field = if field_ok {
+			std::str::from_utf8(field_bytes).unwrap_or("")
+		} else {
+			""
+		};
 		if field_ok
 			&& check.is_ascii_digit()
 			&& field.contains('<')
@@ -569,6 +581,24 @@ fn scan_account(text: &str, hits: &mut Vec<AuHit>) {
 
 #[cfg(test)]
 mod tests {
+	#[test]
+	fn multi_byte_characters_never_split_a_slice() {
+		// Coding agents send em dashes, arrows and emoji next to numbers.
+		let base =
+			"ABN 12 000 000 041 and passport L898902C<3 — see TFN 123 456 782 → Medicare 2123 45670 1 ✅";
+		for at in 0..=base.len() {
+			if !base.is_char_boundary(at) {
+				continue;
+			}
+			for insert in ["—", "→", "✅", "é"] {
+				let text = format!("{}{insert}{}", &base[..at], &base[at..]);
+				let _ = super::scan(&text);
+				let padded = format!("{}{text}", "—".repeat(30));
+				let _ = super::scan(&padded);
+			}
+		}
+	}
+
 	use super::*;
 
 	#[test]

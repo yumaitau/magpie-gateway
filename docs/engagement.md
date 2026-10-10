@@ -23,6 +23,7 @@ and logged against the person who sent it.
 ./magpie.sh new acme            # about ten questions
 ./magpie.sh up acme             # 15 to 20 minutes the first time
 ./magpie.sh check acme          # live smoke test, including a DLP block
+./magpie.sh uitest acme         # browser test of the portal against the live stack
 ./magpie.sh connect acme alex   # setup files for one developer
 ./magpie.sh sso acme            # optional: Entra ID sign-in for the portal
 ```
@@ -63,9 +64,12 @@ Melbourne they route to.
 
 ## Models and residency
 
-The default models are `claude-opus-5-5`, `claude-sonnet-5-5` and
-`claude-haiku-5-5`, mapped to `au.anthropic.*` inference profiles. Those
-profiles process only in `ap-southeast-2` and `ap-southeast-4`. The
+`new` makes a one-token call to each Claude AU inference profile,
+newest first, and keeps the newest Opus, Sonnet and Haiku the account
+can actually call. Accounts often have older models turned on and newer
+ones not, so the names follow what is there, for example
+`claude-sonnet-4-6` or `claude-sonnet-5-5`. `au.anthropic.*` profiles
+process only in `ap-southeast-2` and `ap-southeast-4`. The
 gateway translates the OpenAI Chat Completions and Responses APIs to
 Bedrock, so Codex and Copilot can use the same models.
 
@@ -78,6 +82,9 @@ That is the client's decision, and the audit log records it.
 Fable models have no AU inference profile and are not offered.
 
 ## Things to know
+
+- `up` and `down` show the Terraform plan and ask. Set
+  `MAGPIE_AUTO_APPROVE=1` to skip that in a script.
 
 - A request whose DLP rule says redact, mask or tokenise is blocked,
   not rewritten. Rewriting would break coding agents' tool calls. The

@@ -7,6 +7,7 @@
 #   ./magpie.sh key add|remove <client> <person>
 #   ./magpie.sh sso <client>              register the portal in Microsoft Entra ID
 #   ./magpie.sh check <client>            smoke test the live gateway
+#   ./magpie.sh uitest <client>           browser test of the live portal
 #   ./magpie.sh report <client>           download the audit log and register
 #   ./magpie.sh down <client>             destroy everything
 #
@@ -20,7 +21,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGAGEMENTS="${MAGPIE_ENGAGEMENTS:-$ROOT/engagements}"
 
 # Bedrock AU inference profiles route only to Sydney and Melbourne.
-DEFAULT_BEDROCK_MODELS="claude-opus-5-5=au.anthropic.claude-opus-5-5,claude-sonnet-5-5=au.anthropic.claude-sonnet-5-5,claude-haiku-5-5=au.anthropic.claude-haiku-5-5"
+# Newest first. `new` keeps the first one per family the account can call.
+BEDROCK_CANDIDATES="
+opus au.anthropic.claude-opus-5-5 au.anthropic.claude-opus-5 au.anthropic.claude-opus-4-8 au.anthropic.claude-opus-4-7 au.anthropic.claude-opus-4-6-v1
+sonnet au.anthropic.claude-sonnet-5-5 au.anthropic.claude-sonnet-5 au.anthropic.claude-sonnet-4-6 au.anthropic.claude-sonnet-4-5-20250929-v1:0
+haiku au.anthropic.claude-haiku-5-5 au.anthropic.claude-haiku-4-5-20251001-v1:0
+"
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -96,6 +102,14 @@ people() {
 	done
 }
 
+first_person() {
+	local person
+	for person in $(people); do
+		printf '%s' "$person"
+		return
+	done
+}
+
 url() {
 	terraform -chdir="$DIR/terraform" output -raw url 2>/dev/null || die "Not deployed yet. Run: ./magpie.sh up $CLIENT"
 }
@@ -122,8 +136,9 @@ cmd_new() {
 	say "Claude through Amazon Bedrock AU inference profiles stays in Sydney and Melbourne."
 	say "Claude Code, Codex and Copilot can all use it through the gateway."
 	if confirm "Use Claude on Bedrock (Australia)?" Y; then
-		bedrock="$DEFAULT_BEDROCK_MODELS"
-		say "Check that the client's account has Anthropic model access in the Bedrock console (ap-southeast-2)."
+		bedrock="$(AWS_PROFILE="$aws_profile" detect_bedrock)"
+		[[ -n $bedrock ]] || die "The account cannot call any Claude AU inference profile. Turn on Anthropic model access in the Bedrock console (ap-southeast-2), then run new again."
+		say "Using: $bedrock"
 	fi
 	if confirm "Also route to an existing Azure OpenAI resource?" N; then
 		ask azure_resource "Azure OpenAI resource name (the part before .openai.azure.com)"
@@ -183,6 +198,33 @@ EOF
 	step "Ready"
 	say "Saved to $DIR"
 	say "Next: ./magpie.sh up $CLIENT"
+}
+
+# Gateway name for a Bedrock ID: au.anthropic.claude-sonnet-4-5-20250929-v1:0 -> claude-sonnet-4-5
+model_alias() {
+	local id="${1#au.anthropic.}"
+	id="${id%-v1:0}"
+	id="${id%-v1}"
+	printf '%s' "$id" | sed -E 's/-[0-9]{8}$//'
+}
+
+# One tiny Converse call per candidate, newest first, until one per family answers.
+detect_bedrock() {
+	local family id out=""
+	need aws
+	say "Checking which Claude models this account can call in ap-southeast-2..." >&2
+	while read -r family ids; do
+		[[ -n $family ]] || continue
+		for id in $ids; do
+			if aws bedrock-runtime converse --region ap-southeast-2 --model-id "$id" \
+				--messages '[{"role":"user","content":[{"text":"hi"}]}]' \
+				--inference-config maxTokens=1 >/dev/null 2>&1; then
+				out+="$(model_alias "$id")=$id,"
+				break
+			fi
+		done
+	done <<<"$BEDROCK_CANDIDATES"
+	printf '%s' "${out%,}"
 }
 
 new_key() {
@@ -361,6 +403,15 @@ EOF
 
 # ---------------------------------------------------------------- up / down
 
+# Terraform shows the plan and asks. MAGPIE_AUTO_APPROVE=1 skips that for scripts.
+tf() { # tf apply|destroy
+	if [[ ${MAGPIE_AUTO_APPROVE:-} == 1 ]]; then
+		terraform -chdir="$DIR/terraform" "$1" -auto-approve
+	else
+		terraform -chdir="$DIR/terraform" "$1"
+	fi
+}
+
 aws_env() {
 	export AWS_PROFILE AWS_REGION
 	aws sts get-caller-identity --query Account --output text >/dev/null 2>&1 ||
@@ -374,12 +425,12 @@ cmd_up() {
 	say "Deploying to AWS account $(aws sts get-caller-identity --query Account --output text) in $AWS_REGION."
 	render_terraform
 	terraform -chdir="$DIR/terraform" init -upgrade -input=false >/dev/null
-	terraform -chdir="$DIR/terraform" apply -input=false
+	tf apply
 	local base
 	base="$(url)"
 	step "Waiting for the gateway to answer (CloudFront can take 10 to 15 minutes the first time)"
 	local tries=0
-	until curl -fsS -o /dev/null "$base/healthz"; do
+	until curl -fs -o /dev/null "$base/healthz"; do
 		tries=$((tries + 1))
 		((tries < 90)) || die "No answer from $base/healthz after 15 minutes. Check the ECS service and the /magpie/$CLIENT log group."
 		sleep 10
@@ -399,7 +450,7 @@ cmd_down() {
 	local confirm
 	ask confirm "Type the client name to continue"
 	[[ $confirm == "$CLIENT" ]] || die "Not confirmed."
-	terraform -chdir="$DIR/terraform" destroy -input=false
+	tf destroy
 }
 
 # ---------------------------------------------------------------- keys
@@ -432,6 +483,7 @@ first_model() { # first_model PATTERN
 			return
 		}
 	done
+	return 0
 }
 
 cmd_connect() {
@@ -584,7 +636,7 @@ cmd_check() {
 	need curl jq
 	local base key person model failed=0 code body
 	base="$(url)"
-	person="$(people | head -1)"
+	person="$(first_person)"
 	key="$(<"$DIR/keys/$person.key")"
 	model="$(first_model 'claude-haiku*')"
 	model="${model:-$(first_model '*')}"
@@ -635,6 +687,25 @@ cmd_check() {
 	say "All checks passed. Each request is in the portal's audit log under $person."
 }
 
+# ---------------------------------------------------------------- uitest
+
+cmd_uitest() {
+	load "${1:-}"
+	need npm npx
+	local person model
+	person="$(first_person)"
+	model="$(first_model 'claude-haiku*')"
+	model="${model:-$(first_model '*')}"
+	(
+		cd "$ROOT/magpie/axe"
+		npm ci --silent
+		npx playwright install chromium >/dev/null
+		MAGPIE_LIVE_URL="$(url)" MAGPIE_ADMIN_PASSWORD="$MAGPIE_ADMIN_PASSWORD" \
+			MAGPIE_KEY="$(<"$DIR/keys/$person.key")" MAGPIE_PERSON="$person" MAGPIE_MODEL="$model" \
+			npx playwright test live/ --reporter=list
+	)
+}
+
 # ---------------------------------------------------------------- report
 
 cmd_report() {
@@ -661,7 +732,7 @@ cmd_report() {
 # ---------------------------------------------------------------- main
 
 usage() {
-	sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -676,6 +747,7 @@ main() {
 	connect) cmd_connect "$@" ;;
 	sso) cmd_sso "$@" ;;
 	check) cmd_check "$@" ;;
+	uitest) cmd_uitest "$@" ;;
 	report) cmd_report "$@" ;;
 	render) # for tests: print the proxy config
 		load "${1:-}"
