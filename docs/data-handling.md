@@ -32,10 +32,12 @@ the settings form does not turn it on.
 
 ## Tokenisation
 
-`tokenise` writes `TOK_<KIND>_<hex>` from HMAC-SHA256. The key is the
-session secret, or `magpie-example-key` if the key is empty. It is not
-a vault and it cannot be reversed by the portal. Do not treat the token
-as a protected copy of the identifier. Prefer redact or mask.
+`tokenise` writes `TOK_<KIND>_<hex>` from HMAC-SHA256 of the session
+secret. An empty key redacts the match instead of minting a token. The
+process also refuses to start, outside demo mode, when the session
+secret is missing or is `change-me`, `dev-only-change-me`, or
+`magpie-example-key`. The token is not a vault and it cannot be
+reversed by the portal. Prefer redact or mask.
 
 ## Residency of the portal itself
 

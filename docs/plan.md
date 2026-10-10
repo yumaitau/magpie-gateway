@@ -285,17 +285,18 @@ decision reads them.
 
 ### Deployment and evidence
 
-Helm and Compose run the portal. Compose can start Presidio as a
-profile, using the image's own uid 1001. They do not run Postgres.
+Compose runs the portal and agentgateway. Helm runs the portal.
+Compose can start Presidio as a profile, using the image's own uid
+1001. They do not run Postgres.
 The portal refuses a `postgres://` URL. Portal containers are
 non-root, with a read-only root filesystem. Terraform examples cover
 ECS on AWS `ap-southeast-2` and a container app on Azure Australia
 East. CI builds the portal image, writes a CycloneDX SBOM and scans
-it. Cosign signing is documented for the operator. It is not a CI
-job, because this repository does not hold a signing key and does not
-push an image. The Windows guide cites current Claude Code, Codex and
-VS Code docs for the exact paths. It does not invent an Intune
-profile name where the vendor has not published one.
+it. A push to `main` publishes the image to GHCR and signs the digest
+with keyless cosign. No signing key is stored. The Windows guide
+cites current Claude Code, Codex and VS Code docs for the exact
+paths. It does not invent an Intune profile name where the vendor
+has not published one.
 
 The monthly report is CSV and a small PDF. Each row maps a Magpie
 control or an observed count to the ISM (September 2026), the

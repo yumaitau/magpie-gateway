@@ -5,8 +5,12 @@ use magpie::identity::{BreakGlassConfig, OidcProviderKind, hash_password};
 #[tokio::main]
 async fn main() {
 	let database = std::env::var("MAGPIE_DATABASE_URL").unwrap_or_else(|_| "magpie.sqlite".into());
-	let secret =
-		std::env::var("MAGPIE_SESSION_SECRET").unwrap_or_else(|_| "dev-only-change-me".into());
+	let demo = std::env::var("MAGPIE_DEMO").ok().as_deref() == Some("1");
+	let supplied = std::env::var("MAGPIE_SESSION_SECRET").ok();
+	let secret = magpie::resolve_session_secret(supplied.as_deref(), demo).unwrap_or_else(|error| {
+		eprintln!("{error}");
+		std::process::exit(1);
+	});
 	let mut break_glass = BreakGlassConfig::default();
 	if std::env::var("MAGPIE_BREAK_GLASS").ok().as_deref() == Some("1") {
 		let password =
@@ -17,7 +21,7 @@ async fn main() {
 	let config = magpie_portal::Config {
 		database_path: database,
 		cookie_secure: std::env::var("MAGPIE_COOKIE_SECURE").ok().as_deref() != Some("0"),
-		demo: std::env::var("MAGPIE_DEMO").ok().as_deref() == Some("1"),
+		demo,
 		seed_examples: std::env::var("MAGPIE_SEED_EXAMPLES").ok().as_deref() == Some("1"),
 		mock_idp: std::env::var("MAGPIE_MOCK_IDP").ok().as_deref() == Some("1"),
 		oidc_kind: OidcProviderKind::Generic,

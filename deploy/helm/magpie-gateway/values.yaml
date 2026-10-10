@@ -20,7 +20,8 @@ presidio:
   anonymizerRepository: ghcr.io/data-privacy-stack/presidio-anonymizer
   anonymizerTag: latest
 
-sessionSecret: change-me
+# Required. helm template fails while this is empty or a known default.
+sessionSecret: ""
 cookieSecure: true
 breakGlass: false
 

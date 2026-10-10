@@ -79,6 +79,10 @@ jobs:
 
   image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - name: Build the portal image
@@ -101,3 +105,40 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+      - name: Proxy denies an unapproved tool
+        run: |
+          export MAGPIE_SESSION_SECRET="$(openssl rand -hex 32)"
+          export MAGPIE_PORTAL_IMAGE=magpie-gateway-portal:ci
+          docker compose -f deploy/compose/docker-compose.yml up -d --no-build
+          deploy/compose/smoke.sh
+      - name: Stop compose
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.yml down -v
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cosign
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@v4.1.2
+      - name: Publish and sign
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/magpie-gateway-portal"
+          docker tag magpie-gateway-portal:ci "${image}:${GITHUB_SHA}"
+          docker push "${image}:${GITHUB_SHA}"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "${image}:${GITHUB_SHA}")"
+          case "${digest}" in
+            ghcr.io/*@sha256:*) ;;
+            *) echo "expected a ghcr digest, got: ${digest}" >&2; exit 1 ;;
+          esac
+          docker tag "${image}:${GITHUB_SHA}" "${image}:main"
+          docker push "${image}:main"
+          cosign sign --yes "${digest}"
+          gh api --method PUT -H "Accept: application/vnd.github+json" \
+            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/magpie-gateway-portal/visibility" \
+            -f visibility=public

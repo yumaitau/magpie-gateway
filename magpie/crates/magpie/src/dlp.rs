@@ -392,12 +392,12 @@ fn mask(value: &str) -> String {
 }
 
 fn tokenise(kind: HitKind, value: &str, key: &[u8]) -> String {
-	let mut mac = HmacSha256::new_from_slice(if key.is_empty() {
-		b"magpie-example-key"
-	} else {
-		key
-	})
-	.expect("hmac key");
+	// An empty key used to fall back to a well-known HMAC key. That made
+	// every token guessable. Redact instead of minting one.
+	if key.is_empty() {
+		return "[redacted]".to_string();
+	}
+	let mut mac = HmacSha256::new_from_slice(key).expect("hmac key");
 	mac.update(kind_name(kind).as_bytes());
 	mac.update(b":");
 	mac.update(value.as_bytes());
@@ -475,6 +475,29 @@ mod tests {
 		assert_eq!(first.output, second.output);
 		assert!(first.output.contains("TOK_ACN_"));
 		assert!(!first.output.contains("123"));
+	}
+
+	#[test]
+	fn empty_token_key_does_not_use_a_well_known_key() {
+		let mut rules = default_rules();
+		for rule in &mut rules {
+			if rule.kind == HitKind::Acn {
+				rule.action = Action::Tokenise;
+			}
+		}
+		let text = "ACN 123 456 780";
+		let empty = inspect(text, &Default::default(), &rules, &[], b"");
+		let example = inspect(
+			text,
+			&Default::default(),
+			&rules,
+			&[],
+			b"magpie-example-key",
+		);
+		assert!(!empty.output.contains("TOK_"), "{}", empty.output);
+		assert!(empty.output.contains("[redacted]"));
+		assert!(example.output.contains("TOK_ACN_"));
+		assert_ne!(empty.output, example.output);
 	}
 
 	#[test]

@@ -1,9 +1,11 @@
 # Deployment examples
 
-These files deploy the Magpie portal. They do not build or brand the
-agentgateway proxy. Run the proxy from its own image and point its LLM
-webhook and MCP allow rule at the portal. See
-`examples/agentgateway.yaml`.
+Compose starts the portal, a notes MCP server, and agentgateway.
+The proxy config is `compose/agentgateway.yaml`: the LLM webhook points
+at the portal, and the MCP allow list is `example_search`. A localhost
+shape of that webhook is `examples/agentgateway.yaml`. The proxy image
+is `ghcr.io/agentgateway/agentgateway:v1.6.0`. This tree is pinned a
+few commits later, at `docs/UPSTREAM`.
 
 Nothing in the default Compose file or Helm values enables telemetry,
 Presidio, break-glass login or a phone-home endpoint.
@@ -19,11 +21,14 @@ lives on `/data`. A `postgres://` URL is refused by the portal. The
 Postgres DDL is `POSTGRES_SCHEMA` in the library, for an operator who
 applies it with their own client.
 
-Sign the image with cosign when you publish it. This repository does
-not push to a public registry.
+Pushes to `main` publish `ghcr.io/yumaitau/magpie-gateway-portal` tagged
+with the commit SHA and `main`, then sign that digest with keyless
+cosign. No signing key is stored in the repository.
 
 ```bash
-cosign sign --yes magpie-gateway-portal:0.1.0
+cosign verify ghcr.io/yumaitau/magpie-gateway-portal:main \
+  --certificate-identity-regexp '^https://github.com/yumaitau/magpie-gateway/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 Write a CycloneDX SBOM with syft:
@@ -35,8 +40,15 @@ syft magpie-gateway-portal:0.1.0 -o cyclonedx-json > magpie-portal.cdx.json
 ## Compose
 
 ```bash
+export MAGPIE_SESSION_SECRET="$(openssl rand -hex 32)"
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
+
+`deploy/compose/smoke.sh` calls `example_admin` through the proxy and
+checks the notes server never saw it, then calls `example_search` and
+checks that the notes server did. The proxy listens on
+`127.0.0.1:3000`. Set `MAGPIE_PROXY_PORT` if that port is taken, and
+`MAGPIE_PROXY_URL` to the same port when you run the smoke test.
 
 Presidio is a profile, using `ghcr.io/data-privacy-stack`. Those
 images already run as uid 1001 and listen on port 3000, so Compose
@@ -48,11 +60,13 @@ call.
 ## Helm
 
 ```bash
-helm template magpie deploy/helm/magpie-gateway
+helm template magpie deploy/helm/magpie-gateway --set sessionSecret="$(openssl rand -hex 32)"
 ```
 
-Replace `sessionSecret` with a real secret before install. The chart
-does not create a TLS certificate. Terminate TLS at the ingress.
+The chart refuses an empty `sessionSecret` and the old defaults
+`change-me`, `dev-only-change-me`, and `magpie-example-key`. It does
+not create a TLS certificate. Terminate TLS at the ingress. The chart
+still runs the portal only. Use Compose when you want the proxy beside it.
 
 ## Cloud examples
 
