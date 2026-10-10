@@ -739,7 +739,6 @@ cmd_report() {
 	out="$DIR/handover/report-$(date +%Y-%m-%d)"
 	mkdir -p "$out"
 	jar="$(mktemp)"
-	trap 'rm -f "$jar"' RETURN
 	code="$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" \
 		--data-urlencode "username=admin" --data-urlencode "password=$MAGPIE_ADMIN_PASSWORD" \
 		"$base/api/auth/break-glass")"
@@ -747,6 +746,7 @@ cmd_report() {
 	curl -fsS -b "$jar" "$base/audit.csv" -o "$out/audit-log.csv"
 	curl -fsS -b "$jar" "$base/use-cases.csv" -o "$out/ai-use-case-register.csv"
 	curl -fsS -b "$jar" "$base/api/export" -o "$out/policy-export.json"
+	rm -f "$jar"
 	cp "$DIR/agentgateway.yaml" "$out/gateway-config.yaml"
 	step "Report written to $out"
 	ls -1 "$out" | sed 's/^/  /'
