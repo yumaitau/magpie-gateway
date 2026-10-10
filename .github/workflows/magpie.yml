@@ -129,6 +129,8 @@ jobs:
         uses: sigstore/cosign-installer@v4.1.2
       - name: Publish and sign
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/magpie-gateway-portal"
