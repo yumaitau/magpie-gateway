@@ -1,0 +1,6 @@
+// Twenty or more DLP hits in an hour. The reason text is written by the portal.
+MagpieAudit_CL
+| where TimeGenerated > ago(1d)
+| where Reason has "DLP hit"
+| summarize Hits = count(), Agents = make_set(AgentId, 20) by Window = bin(TimeGenerated, 1h)
+| where Hits >= 20

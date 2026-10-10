@@ -1,0 +1,43 @@
+replicaCount: 1
+
+image:
+  repository: magpie-gateway-portal
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8088
+
+# Off unless an operator sets a real endpoint.
+telemetry: false
+presidio:
+  enabled: false
+  # Community images, uid 1001, port 3000. Pin a digest before production.
+  # Do not use mcr.microsoft.com/presidio. The sidecar does not use the
+  # portal's read-only root or uid 65532.
+  analyzerRepository: ghcr.io/data-privacy-stack/presidio-analyzer
+  analyzerTag: latest
+  anonymizerRepository: ghcr.io/data-privacy-stack/presidio-anonymizer
+  anonymizerTag: latest
+
+sessionSecret: change-me
+cookieSecure: true
+breakGlass: false
+
+persistence:
+  size: 1Gi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

@@ -1,0 +1,103 @@
+name: magpie
+
+on:
+  pull_request:
+    paths:
+      - magpie/**
+      - deploy/**
+      - detections/**
+      - docs/**
+      - .github/workflows/magpie.yml
+  push:
+    branches:
+      - main
+    paths:
+      - magpie/**
+      - deploy/**
+      - detections/**
+      - docs/**
+      - .github/workflows/magpie.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path magpie/Cargo.toml --all -- --check
+      - name: Clippy
+        # Relative CLIPPY_CONF_DIR is resolved from the rustc cwd (the magpie
+        # workspace), so "magpie" does not exist there. Pin the directory that
+        # holds magpie/.clippy.toml and keep the proxy config at the repo root
+        # out of this workspace.
+        run: CLIPPY_CONF_DIR="${GITHUB_WORKSPACE}/magpie" cargo clippy --manifest-path magpie/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path magpie/Cargo.toml
+
+  axe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the portal
+        run: cargo build --manifest-path magpie/Cargo.toml -p magpie-portal
+      - name: Install Playwright
+        working-directory: magpie/axe
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: axe
+        run: |
+          MAGPIE_DEMO=1 MAGPIE_SEED_EXAMPLES=1 MAGPIE_DATABASE_URL=:memory: \
+            MAGPIE_COOKIE_SECURE=0 MAGPIE_LISTEN=127.0.0.1:8088 \
+            ./magpie/target/debug/magpie-portal > /tmp/magpie-portal.log 2>&1 &
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            cat /tmp/magpie-portal.log
+            exit 1
+          fi
+          npm test --prefix magpie/axe
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the portal image
+        run: docker build -f deploy/portal.Dockerfile -t magpie-gateway-portal:ci .
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: magpie-gateway-portal:ci
+          format: cyclonedx-json
+          output-file: magpie-portal.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: magpie-portal-sbom
+          path: magpie-portal.cdx.json
+      - name: Scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: magpie-gateway-portal:ci
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true

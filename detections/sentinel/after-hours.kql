@@ -1,0 +1,8 @@
+// Tool calls outside 08:00-18:00 Australia/Sydney on a weekday.
+// Change the timezone and the hours to the agency's own calendar.
+MagpieAudit_CL
+| where TimeGenerated > ago(7d)
+| where Kind == "decision" and isnotempty(Tool)
+| extend Local = datetime_utc_to_local(TimeGenerated, "Australia/Sydney")
+| where dayofweek(Local) in (0d, 6d) or hourofday(Local) < 8 or hourofday(Local) >= 18
+| project TimeGenerated, Local, Actor, AgentId, Tool, Decision

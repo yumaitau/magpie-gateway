@@ -1,0 +1,5 @@
+// Sovereign mode, a non-Australian region, or PROTECTED off the approved list.
+MagpieAudit_CL
+| where TimeGenerated > ago(1d)
+| where Decision == "block" and (Reason has "Sovereign mode" or Reason has "hosted in Australia" or Reason has "approved list")
+| project TimeGenerated, Actor, AgentId, Model, Reason

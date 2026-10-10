@@ -1,0 +1,5 @@
+// A tool or model the portal denied because it is not approved, or the approval has expired.
+MagpieAudit_CL
+| where TimeGenerated > ago(1d)
+| where Decision == "block" and Reason has "not approved"
+| project TimeGenerated, Actor, AgentId, Tool, Model, Reason

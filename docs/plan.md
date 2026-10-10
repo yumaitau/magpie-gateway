@@ -262,12 +262,14 @@ Ingestion, Splunk HEC, an OCSF object for S3 or Security Lake, and an
 RFC 5424 syslog line. Delivery is attempted only when that sink is
 configured. Tests check the payload shape against a local recorder.
 
-Detection content in `detections/` is written for this schema. Burst
-thresholds are adapted from `yumaitau/ai-agent-threat-detection`
-rule A11 (100 tool calls in 10 minutes, 15 distinct tools) and said
-to be adapted. The other rules (unapproved tool, DLP spike, credential
-shape, after-hours call, blocked destination) are new, because that
-repository did not have those queries.
+Detection content in `detections/` is written for this schema. The
+public pack at `yumaitau/ai-agent-threat-detection` does not contain a
+tool-call spree query. Its closest burst rule is Microsoft `D14`, which
+counts WAF hits in a 10 minute bin (40 hits, 8 rules, 15 URIs), and
+`D15`, a draft hunt for new MCP destinations. Magpie's tool-spree query
+uses that 10 minute window and a distinct-count idea, with its own
+starting thresholds of 100 calls or 15 distinct tools, because a WAF
+rule is not a tool call. The other five queries are new.
 
 ### Prompt injection and tool safety
 
@@ -283,12 +285,16 @@ decision reads them.
 
 ### Deployment and evidence
 
-Helm and Compose run the portal and, optionally, Presidio and
-Postgres. Containers are non-root, with a read-only root filesystem.
-Terraform examples cover ECS on AWS `ap-southeast-2` and a container
-app on Azure Australia East. Signing (cosign) and a CycloneDX SBOM
-script are in CI. The Windows guide cites current Claude Code, Codex
-and VS Code docs for the exact paths. It does not invent an Intune
+Helm and Compose run the portal. Compose can start Presidio as a
+profile, using the image's own uid 1001. They do not run Postgres.
+The portal refuses a `postgres://` URL. Portal containers are
+non-root, with a read-only root filesystem. Terraform examples cover
+ECS on AWS `ap-southeast-2` and a container app on Azure Australia
+East. CI builds the portal image, writes a CycloneDX SBOM and scans
+it. Cosign signing is documented for the operator. It is not a CI
+job, because this repository does not hold a signing key and does not
+push an image. The Windows guide cites current Claude Code, Codex and
+VS Code docs for the exact paths. It does not invent an Intune
 profile name where the vendor has not published one.
 
 The monthly report is CSV and a small PDF. Each row maps a Magpie
@@ -311,7 +317,7 @@ page and runs axe against WCAG 2.2 AA.
 
 - No gRPC ExtMcp implementation. MCP enforcement is the shared engine
   behind a JSON check, plus CEL the portal generates for the proxy.
-- No SAML signature verification.
+- No SAML login. The endpoint returns 501.
 - No TFN or CRN checksum, and no invented driver-licence formats.
 - Tokenisation is not reversible.
 - Presidio is not started unless configured. Australian checksums do

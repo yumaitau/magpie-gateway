@@ -1,0 +1,57 @@
+# Example only. Replace the host names and the session secret.
+# Telemetry, Presidio and audit sinks stay off unless you set them.
+
+services:
+  portal:
+    build:
+      context: ../..
+      dockerfile: deploy/portal.Dockerfile
+    image: magpie-gateway-portal:0.1.0
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:8088:8088"
+    environment:
+      MAGPIE_DATABASE_URL: /data/magpie.sqlite
+      MAGPIE_LISTEN: 0.0.0.0:8088
+      MAGPIE_COOKIE_SECURE: "1"
+      MAGPIE_SESSION_SECRET: change-me
+      MAGPIE_DEMO: "0"
+      MAGPIE_SEED_EXAMPLES: "0"
+      MAGPIE_MOCK_IDP: "0"
+      MAGPIE_BREAK_GLASS: "0"
+    volumes:
+      - portal-data:/data
+    tmpfs:
+      - /tmp
+
+  # Optional. Start with: docker compose --profile presidio up
+  # Community images. Do not switch these to mcr.microsoft.com/presidio.
+  # The published Dockerfiles run as uid 1001 and listen on 3000.
+  # Do not override that user. A read-only root was not verified here.
+  presidio-analyzer:
+    profiles: ["presidio"]
+    image: ghcr.io/data-privacy-stack/presidio-analyzer:latest
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:5002:3000"
+
+  presidio-anonymizer:
+    profiles: ["presidio"]
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:5001:3000"
+
+volumes:
+  portal-data:

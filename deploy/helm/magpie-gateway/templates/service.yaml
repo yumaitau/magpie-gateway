@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-portal
+  labels:
+    app.kubernetes.io/name: magpie-gateway
+spec:
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: magpie-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}

@@ -1,0 +1,42 @@
+# Example only. Not a complete proxy config. The shapes match
+# examples/llm-guardrail-jev-openai/config.yaml and
+# examples/mcp-authorization/config.yaml in this repository.
+# Replace the hosts. Leave tracing unset so the proxy does not export
+# telemetry unless you choose to.
+
+llm:
+  models:
+    - name: example-au-model
+      provider: openai
+      params:
+        apiKey: $EXAMPLE_API_KEY
+      guardrails:
+        request:
+          - webhook:
+              target:
+                host: 127.0.0.1:8088
+              headers:
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'example-au-model'"
+                x-magpie-model: "'example-au-model'"
+        response:
+          - webhook:
+              target:
+                host: 127.0.0.1:8088
+              headers:
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'example-au-model'"
+                x-magpie-model: "'example-au-model'"
+
+mcp:
+  port: 3000
+  policies:
+    mcpAuthorization:
+      rules:
+        # Paste the expression from the Magpie Policies page.
+        # An empty approved list is `false`. With no rules, the proxy allows every tool.
+        - "mcp.tool.name in ['example_search']"
+  targets:
+    - name: example-notes
+      mcp:
+        host: http://127.0.0.1:3001/mcp
