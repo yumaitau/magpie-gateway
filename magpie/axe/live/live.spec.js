@@ -15,13 +15,20 @@ const person = process.env.MAGPIE_PERSON;
 const model = process.env.MAGPIE_MODEL;
 
 const tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+let adminCookies;
 
 async function signIn(page) {
+  if (adminCookies) {
+    await page.context().addCookies(adminCookies);
+    await page.goto(`${base}/ui/`);
+    return;
+  }
   await page.goto(`${base}/login`);
   await page.getByLabel('Email or username').fill('admin');
   await page.getByLabel('Password').fill(process.env.MAGPIE_ADMIN_PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page).toHaveURL(/\/ui\/$/);
+  adminCookies = await page.context().cookies();
 }
 
 async function ask(request, content) {
@@ -70,6 +77,17 @@ test('a wrong password is refused', async ({ page }) => {
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page).not.toHaveURL(/\/dashboard$/);
 });
+
+for (const [path, title] of [['account', 'Change password'], ['people', 'Invite colleague']]) {
+  test(`${path} is available in the native shell and passes axe`, async ({ page }) => {
+    await signIn(page);
+    await page.goto(`${base}/ui/${path}`);
+    await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
+    await expect(page.locator('.app-shell')).toHaveCount(1);
+    const results = await new AxeBuilder({ page }).withTags(tags).analyze();
+    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+  });
+}
 
 for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/policies', '/dlp', '/audit', '/approvals', '/settings', '/access', '/australia']) {
   test(`${path} loads for the administrator without example data and passes axe`, async ({ page }) => {
