@@ -1,0 +1,128 @@
+.advanced-navigation {
+	margin-top: 14px;
+	border-top: 1px solid var(--line);
+	padding-top: 10px;
+}
+
+.advanced-navigation > summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px;
+	color: var(--muted);
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	list-style: none;
+}
+
+.advanced-navigation > summary::-webkit-details-marker {
+	display: none;
+}
+
+.advanced-navigation > summary > svg:last-child {
+	margin-left: auto;
+	transform: rotate(-90deg);
+}
+
+.advanced-navigation[open] > summary > svg:last-child {
+	transform: rotate(0deg);
+}
+
+.advanced-navigation > summary:focus-visible,
+.gateway-settings > summary:focus-visible {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+.quick-start {
+	max-width: 1000px;
+}
+
+.quick-start-heading h2 {
+	margin: 0 0 8px;
+	font-size: 20px;
+}
+
+:root[data-theme='dark'] .quick-start .button.primary {
+	color: var(--bg);
+}
+
+:root[data-theme='dark'] .user-avatar {
+	color: var(--primary-strong);
+}
+
+.quick-start p {
+	max-width: 65ch;
+	color: var(--muted);
+	line-height: 1.6;
+}
+
+.quick-start-steps {
+	list-style: none;
+	padding: 0;
+	margin: 28px 0 20px;
+}
+
+.quick-start-steps li {
+	display: grid;
+	grid-template-columns: 32px 1fr auto;
+	align-items: center;
+	gap: 16px;
+	padding: 24px 0;
+	border-top: 1px solid var(--line);
+}
+
+.quick-start-number {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border: 1px solid var(--line);
+	border-radius: 50%;
+	font-weight: 600;
+}
+
+.quick-start-steps h3 {
+	margin: 0;
+	font-size: 16px;
+}
+
+.quick-start-steps p {
+	margin: 6px 0 0;
+}
+
+.gateway-settings {
+	border-top: 1px solid var(--line);
+	padding-top: 16px;
+}
+
+.gateway-settings > summary {
+	padding: 8px 0 16px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.gateway-settings > summary span,
+.model-routing > summary span {
+	margin-left: 12px;
+	color: var(--muted);
+	font-size: 13px;
+	font-weight: 400;
+}
+
+@media (max-width: 700px) {
+	.quick-start-steps li {
+		grid-template-columns: 32px minmax(0, 1fr);
+	}
+
+	.quick-start-steps li > :last-child {
+		grid-column: 2;
+		justify-self: start;
+	}
+
+	.gateway-settings > summary span {
+		display: block;
+		margin: 8px 0 0;
+	}
+}

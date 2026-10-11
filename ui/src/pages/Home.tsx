@@ -1,10 +1,11 @@
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { Bot, Network, Server, Settings } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import type { McpSettingsResource } from '@/api/configResourcesApi';
 import { PageHeader, StatusBanner } from '@/components/Primitives';
+import { QuickStart } from '@/components/QuickStart';
 import { ensureLlm, fileOwnedMcpSettingFields } from '@/config';
 import {
 	useConfigDumpMode,
@@ -51,7 +52,7 @@ export function HomePage() {
 	const enable = useEnableSurface();
 	const upsertResource = useUpsertConfigResource();
 	const help = useSchemaHelp();
-	const [locallyEnabled, setLocallyEnabled] = useState<Set<StartupSurface>>(() => new Set());
+	const navigate = useNavigate();
 	const hasLlm = Boolean(
 		config.data?.llm || models.length || virtualModels.length || providers.length
 	);
@@ -67,30 +68,28 @@ export function HomePage() {
 	const mcpServers = mcpData.data?.mcp?.targets ?? [];
 	const fileOwnedMcpSettings = fileOwnedMcpSettingFields(rawConfig.data, hybrid);
 	const pageDataLoading = configDataLoading || mcpData.isLoading || trafficData.isLoading;
-	const pageDataError = configDataError ?? mcpData.error ?? trafficData.error;
+	const pageDataError = mode.error ?? configDataError ?? mcpData.error ?? trafficData.error;
 	const uiGatewayNeedsAuthWarning =
 		!runtime.isLoading && !runtime.isError && uiExposedWithoutAuth(config.data);
 	const callableModels = models.length + virtualModels.length;
 	const traffic = trafficStats(trafficData.data);
-	const [startupEvaluated, setStartupEvaluated] = useState(false);
-	const [startupFlow, setStartupFlow] = useState(false);
 	const [llmSettingsOpen, setLlmSettingsOpen] = useState(false);
 	const [mcpSettingsOpen, setMcpSettingsOpen] = useState(false);
-	const showStartup = Boolean(config.data && startupFlow);
-	const anySurfaceEnabled = hasLlm || hasMcp || hasTraffic || locallyEnabled.size > 0;
 
-	useEffect(() => {
-		if (!config.data || pageDataLoading || pageDataError || startupEvaluated) return;
-		setStartupFlow(!hasLlm && !hasMcp && (!hasTraffic || isDefaultUiGatewayScaffold(config.data)));
-		setStartupEvaluated(true);
-	}, [config.data, pageDataError, pageDataLoading, hasLlm, hasMcp, hasTraffic, startupEvaluated]);
+	async function startLlm() {
+		try {
+			if (!hasLlm) await enable.mutateAsync({ surface: 'llm' });
+			await navigate({ to: '/llm/models', hash: 'add=model' });
+		} catch {
+			// The mutation exposes the save error below.
+		}
+	}
 
 	async function enableSurface(surface: StartupSurface) {
 		try {
 			await enable.mutateAsync({
 				surface: surface === 'apis' ? 'traffic' : surface
 			});
-			setLocallyEnabled(current => new Set(current).add(surface));
 		} catch {
 			// The enable mutation exposes the save error.
 		}
@@ -110,84 +109,6 @@ export function HomePage() {
 				<PageHeader title="Gateway Overview" />
 				<ReadonlyModeBanner />
 				<TrafficDumpOverview dump={mode.data?.dump} />
-			</div>
-		);
-	}
-
-	if (showStartup) {
-		return (
-			// biome-ignore lint/a11y/noStaticElementInteractions: Existing lint violation; remove this suppression when the underlying issue is fixed.
-			// biome-ignore lint/a11y/useKeyWithClickEvents: Existing lint violation; remove this suppression when the underlying issue is fixed.
-			<div className="startup-shell" onClick={() => setStartupFlow(false)}>
-				{/** biome-ignore lint/a11y/useKeyWithClickEvents: Existing lint violation; remove this suppression when the underlying issue is fixed. */}
-				<section
-					className="startup-panel"
-					role="dialog"
-					aria-modal="true"
-					aria-labelledby="startup-title"
-					onClick={event => event.stopPropagation()}
-				>
-					<div className="startup-copy">
-						<h2 id="startup-title">Welcome to Agentgateway</h2>
-						<p>Choose what this gateway will serve. Anything skipped can be enabled later.</p>
-					</div>
-
-					{pageDataError ? (
-						<StatusBanner state="bad" title="Configuration API unavailable">
-							{pageDataError.message}
-						</StatusBanner>
-					) : null}
-					{enable.isError || update.isError ? (
-						<StatusBanner state="bad" title="Save failed">
-							{enable.error?.message ?? update.error?.message}
-						</StatusBanner>
-					) : null}
-
-					<div className="startup-chip-grid">
-						<StartupChip
-							label="LLM"
-							description="Models, providers, and API keys."
-							enabled={hasLlm || locallyEnabled.has('llm')}
-							disabled={enable.isPending || update.isPending}
-							icon={<Bot size={24} />}
-							onClick={() => void enableSurface('llm')}
-						/>
-						<StartupChip
-							label="MCP"
-							description="MCP servers and tools."
-							enabled={hasMcp || locallyEnabled.has('mcp')}
-							disabled={enable.isPending || update.isPending}
-							icon={<Server size={24} />}
-							onClick={() => void enableSurface('mcp')}
-						/>
-						<StartupChip
-							label="Traffic"
-							description="HTTP and TCP routes and backends."
-							enabled={hasTraffic || locallyEnabled.has('apis')}
-							disabled={enable.isPending || update.isPending}
-							icon={<Network size={24} />}
-							onClick={() => void enableSurface('apis')}
-						/>
-					</div>
-
-					{anySurfaceEnabled ? (
-						<div className="startup-actions">
-							<button
-								className="button primary"
-								type="button"
-								onClick={() => setStartupFlow(false)}
-							>
-								Continue
-							</button>
-						</div>
-					) : (
-						<div className="startup-actions">
-							<button className="button" type="button" onClick={() => setStartupFlow(false)}>
-								Skip setup
-							</button>
-						</div>
-					)}
-				</section>
 			</div>
 		);
 	}
@@ -235,90 +156,103 @@ export function HomePage() {
 				</StatusBanner>
 			) : null}
 
-			<section className="surface-overview-list" aria-label="Gateway surfaces">
-				<SurfaceRow
-					title="LLM"
-					icon={<Bot size={18} />}
-					enabled={hasLlm}
-					disabled={enable.isPending || update.isPending}
-					onEnable={() => void enableSurface('llm')}
-					setupNeeded={callableModels === 0}
-					setupText="Add a model before LLM traffic can be served."
-					setupTo="/llm/models"
-					setupHash="add=model"
-					setupLabel="Set up models"
-					overview={[
-						`${models.length} ${models.length === 1 ? 'model' : 'models'}`,
-						`${virtualModels.length} virtual ${virtualModels.length === 1 ? 'model' : 'models'}`,
-						`${providers.length} shared ${providers.length === 1 ? 'provider' : 'providers'}`,
-						surfaceEndpointLabel(config.data?.llm?.gateways, config.data?.llm?.port ?? 4000)
-					]}
-					actions={
-						<button
-							className="button"
-							type="button"
-							disabled={enable.isPending || update.isPending}
-							onClick={() => setLlmSettingsOpen(true)}
-						>
-							<Settings size={16} />
-							Settings
-						</button>
-					}
+			{!pageDataError && !mode.isError ? (
+				<QuickStart
+					hasModels={callableModels > 0}
+					busy={enable.isPending}
+					onAddModel={() => void startLlm()}
 				/>
-				<SurfaceRow
-					title="MCP"
-					icon={<Server size={18} />}
-					enabled={hasMcp}
-					disabled={enable.isPending || update.isPending}
-					onEnable={() => void enableSurface('mcp')}
-					setupNeeded={mcpServers.length === 0}
-					setupText="Add an MCP target before tools are available."
-					setupTo="/mcp/servers"
-					setupLabel="Set up servers"
-					overview={[
-						`${mcpServers.length} configured ${mcpServers.length === 1 ? 'server' : 'servers'}`,
-						surfaceEndpointLabel(mcpData.data?.mcp?.gateways, mcpData.data?.mcp?.port ?? 3000)
-					]}
-					actions={
-						<button
-							className="button"
-							type="button"
-							disabled={enable.isPending || update.isPending}
-							onClick={() => setMcpSettingsOpen(true)}
-						>
-							<Settings size={16} />
-							Settings
-						</button>
-					}
-				/>
-				<SurfaceRow
-					title="Traffic"
-					icon={<Network size={18} />}
-					enabled={hasTraffic}
-					disabled={enable.isPending || update.isPending}
-					onEnable={() => void enableSurface('apis')}
-					setupNeeded={hasBinds ? traffic.listeners === 0 : traffic.gateways === 0}
-					setupText={
-						hasBinds
-							? 'Add a listener before HTTP or TCP traffic can be served.'
-							: 'Add a gateway before HTTP traffic can be served.'
-					}
-					setupTo={hasBinds ? '/traffic/listeners' : '/traffic/gateways'}
-					setupLabel={hasBinds ? 'Set up listeners' : 'Set up gateways'}
-					overview={
-						hasBinds
-							? [
-									`${traffic.binds} ${traffic.binds === 1 ? 'bind' : 'binds'}`,
-									`${traffic.listeners} ${traffic.listeners === 1 ? 'listener' : 'listeners'}`,
-									`${traffic.httpRoutes + traffic.tcpRoutes} ${traffic.httpRoutes + traffic.tcpRoutes === 1 ? 'route' : 'routes'}`
-								]
-							: [
-									`${traffic.gateways} ${traffic.gateways === 1 ? 'gateway' : 'gateways'}`,
-									`${traffic.httpRoutes} ${traffic.httpRoutes === 1 ? 'route' : 'routes'}`
-								]
-					}
-				/>
-			</section>
+			) : null}
+
+			<details className="gateway-settings">
+				<summary>
+					Gateway settings <span>AI models, MCP tools and traffic routing</span>
+				</summary>
+				<section className="surface-overview-list" aria-label="Gateway surfaces">
+					<SurfaceRow
+						title="LLM"
+						icon={<Bot size={18} />}
+						enabled={hasLlm}
+						disabled={enable.isPending || update.isPending}
+						onEnable={() => void enableSurface('llm')}
+						setupNeeded={callableModels === 0}
+						setupText="Add a model before LLM traffic can be served."
+						setupTo="/llm/models"
+						setupHash="add=model"
+						setupLabel="Set up models"
+						overview={[
+							`${models.length} ${models.length === 1 ? 'model' : 'models'}`,
+							`${virtualModels.length} virtual ${virtualModels.length === 1 ? 'model' : 'models'}`,
+							`${providers.length} shared ${providers.length === 1 ? 'provider' : 'providers'}`,
+							surfaceEndpointLabel(config.data?.llm?.gateways, config.data?.llm?.port ?? 4000)
+						]}
+						actions={
+							<button
+								className="button"
+								type="button"
+								disabled={enable.isPending || update.isPending}
+								onClick={() => setLlmSettingsOpen(true)}
+							>
+								<Settings size={16} />
+								Settings
+							</button>
+						}
+					/>
+					<SurfaceRow
+						title="MCP"
+						icon={<Server size={18} />}
+						enabled={hasMcp}
+						disabled={enable.isPending || update.isPending}
+						onEnable={() => void enableSurface('mcp')}
+						setupNeeded={mcpServers.length === 0}
+						setupText="Add an MCP target before tools are available."
+						setupTo="/mcp/servers"
+						setupLabel="Set up servers"
+						overview={[
+							`${mcpServers.length} configured ${mcpServers.length === 1 ? 'server' : 'servers'}`,
+							surfaceEndpointLabel(mcpData.data?.mcp?.gateways, mcpData.data?.mcp?.port ?? 3000)
+						]}
+						actions={
+							<button
+								className="button"
+								type="button"
+								disabled={enable.isPending || update.isPending}
+								onClick={() => setMcpSettingsOpen(true)}
+							>
+								<Settings size={16} />
+								Settings
+							</button>
+						}
+					/>
+					<SurfaceRow
+						title="Traffic"
+						icon={<Network size={18} />}
+						enabled={hasTraffic}
+						disabled={enable.isPending || update.isPending}
+						onEnable={() => void enableSurface('apis')}
+						setupNeeded={hasBinds ? traffic.listeners === 0 : traffic.gateways === 0}
+						setupText={
+							hasBinds
+								? 'Add a listener before HTTP or TCP traffic can be served.'
+								: 'Add a gateway before HTTP traffic can be served.'
+						}
+						setupTo={hasBinds ? '/traffic/listeners' : '/traffic/gateways'}
+						setupLabel={hasBinds ? 'Set up listeners' : 'Set up gateways'}
+						overview={
+							hasBinds
+								? [
+										`${traffic.binds} ${traffic.binds === 1 ? 'bind' : 'binds'}`,
+										`${traffic.listeners} ${traffic.listeners === 1 ? 'listener' : 'listeners'}`,
+										`${traffic.httpRoutes + traffic.tcpRoutes} ${traffic.httpRoutes + traffic.tcpRoutes === 1 ? 'route' : 'routes'}`
+									]
+								: [
+										`${traffic.gateways} ${traffic.gateways === 1 ? 'gateway' : 'gateways'}`,
+										`${traffic.httpRoutes} ${traffic.httpRoutes === 1 ? 'route' : 'routes'}`
+									]
+						}
+					/>
+				</section>
+			</details>
 			{llmSettingsOpen ? (
 				<LlmSettingsDrawer
 					config={config.data}
@@ -382,38 +316,7 @@ function uiGateway(config: GatewayConfig | null | undefined) {
 	return config?.ui && config.gateways?.default ? 'default' : undefined;
 }
 
-function isDefaultUiGatewayScaffold(config: GatewayConfig) {
-	if (!config.ui || uiGateway(config) !== 'default') return false;
-	if (config.binds?.length || config.routes?.length || config.tcpRoutes?.length) {
-		return false;
-	}
-	const gatewayNames = Object.keys(config.gateways ?? {});
-	return gatewayNames.length === 1 && gatewayNames[0] === 'default';
-}
-
 type StartupSurface = 'llm' | 'mcp' | 'apis';
-
-function StartupChip(props: {
-	description: string;
-	disabled: boolean;
-	enabled: boolean;
-	icon: ReactNode;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			className={props.enabled ? 'startup-chip enabled' : 'startup-chip'}
-			type="button"
-			disabled={props.disabled || props.enabled}
-			onClick={props.onClick}
-		>
-			{props.icon}
-			<strong>{props.enabled ? `${props.label} enabled` : `Enable ${props.label}`}</strong>
-			<span>{props.description}</span>
-		</button>
-	);
-}
 
 function SurfaceRow(props: {
 	disabled: boolean;

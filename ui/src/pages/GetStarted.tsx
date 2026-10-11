@@ -25,8 +25,9 @@ const surfaceConfig: Record<
 	}
 > = {
 	llm: {
-		title: 'Enable LLM',
-		description: 'Add LLM settings to the configuration, then set up models.',
+		title: 'Connect your first model',
+		description:
+			'Start with a provider and its credentials. We will set up the default gateway for you.',
 		enabled: config => Boolean(config?.llm),
 		destination: '/llm/models',
 		destinationLabel: 'Continue to models'
@@ -168,10 +169,14 @@ function GetStartedPage(props: { surface: SurfaceKind }) {
 						<button
 							className="button primary"
 							type="button"
-							disabled={loading || enableSurface.isPending}
+							disabled={loading || Boolean(configError) || enableSurface.isPending}
 							onClick={() => void enable()}
 						>
-							Enable
+							{enableSurface.isPending
+								? 'Setting up…'
+								: props.surface === 'llm'
+									? 'Continue to model setup'
+									: 'Enable'}
 						</button>
 					)}
 					<Link className="button" to="/">

@@ -48,6 +48,7 @@ import '@fontsource/geist-sans/latin-700.css';
 import '@/styles.css';
 import '@/styles/magpie.css';
 import '@/styles/analytics.css';
+import '@/styles/onboarding.css';
 
 const LazyRawConfigPage = React.lazy(() =>
 	import('@/pages/RawConfig').then(module => ({

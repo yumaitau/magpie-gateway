@@ -39,7 +39,11 @@ test('core pages render with mocked gateway data', async ({ page }) => {
 
 	for (const [path, heading] of pages) {
 		if (path !== '/') {
-			await page.locator(`.nav-list a[href="${path}"]`).click();
+			const link = page.locator(`.nav-list a[href="${path}"]`);
+			if (!(await link.isVisible())) {
+				await page.locator('.nav-list .advanced-navigation > summary').click();
+			}
+			await link.click();
 		}
 		await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
 		await expect(page.locator('body')).not.toContainText('Configuration API unavailable');
@@ -159,7 +163,8 @@ test('onboards all surfaces from a completely empty config', async ({ page }) =>
 	const gateway = await mockGateway(page, {});
 	await page.goto('/');
 
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentgateway' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Start with your first model' })).toBeVisible();
+	await page.locator('.gateway-settings > summary').click();
 	await expect(page.getByRole('button', { name: /LLM/ })).toBeVisible();
 	await expect(page.getByRole('button', { name: /MCP/ })).toBeVisible();
 	await page.getByRole('button', { name: /^Enable Traffic/ }).click();
@@ -168,7 +173,8 @@ test('onboards all surfaces from a completely empty config', async ({ page }) =>
 	expect(gateway.postedConfigs[0].gateways).toMatchObject({
 		public: { port: 8080 }
 	});
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentgateway' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Start with your first model' })).toBeVisible();
+	await page.locator('.nav-list .advanced-navigation > summary').click();
 	await expect(page.locator('.nav-list').getByRole('link', { name: 'Gateways' })).toBeVisible();
 
 	await page.getByRole('button', { name: /LLM/ }).click();
@@ -176,15 +182,14 @@ test('onboards all surfaces from a completely empty config', async ({ page }) =>
 	expect(gateway.postedConfigs[1].llm).toEqual({
 		gateways: 'public'
 	});
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentgateway' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Start with your first model' })).toBeVisible();
 
 	await page.getByRole('button', { name: /MCP/ }).click();
 	await expect.poll(() => gateway.postedConfigs.length).toBe(3);
 	expect(gateway.postedConfigs[2].mcp).toEqual({
 		gateways: 'public'
 	});
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentgateway' })).toBeVisible();
-	await page.getByRole('button', { name: 'Continue' }).click();
+	await expect(page.getByRole('heading', { name: 'Start with your first model' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Gateway Overview' })).toBeVisible();
 });
 
@@ -335,8 +340,9 @@ test('onboards LLM and MCP onto the UI gateway when present', async ({ page }) =
 	});
 	await page.goto('/');
 
-	await expect(page.getByRole('heading', { name: 'Welcome to Agentgateway' })).toBeVisible();
-	await expect(page.getByRole('button', { name: /^Traffic enabled/ })).toBeDisabled();
+	await expect(page.getByRole('heading', { name: 'Start with your first model' })).toBeVisible();
+	await page.locator('.gateway-settings > summary').click();
+	await expect(page.getByRole('link', { name: 'Set up gateways' })).toBeVisible();
 
 	await page.getByRole('button', { name: /LLM/ }).click();
 	await expect.poll(() => gateway.postedConfigs.length).toBe(1);
@@ -352,7 +358,8 @@ test('onboards LLM and MCP onto the UI gateway when present', async ({ page }) =
 	});
 	expect(gateway.postedConfigs[1].mcp).not.toHaveProperty('port');
 
-	await expect(page.getByRole('button', { name: /^Traffic enabled/ })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Set up gateways' })).toBeVisible();
+	await page.locator('.nav-list .advanced-navigation > summary').click();
 	await expect(page.locator('.nav-list').getByRole('link', { name: 'Gateways' })).toBeVisible();
 });
 
@@ -842,6 +849,7 @@ test('database-backed MCP servers are available across hybrid UI pages', async (
 	await expect(page.getByText('No MCP servers', { exact: true })).toHaveCount(0);
 
 	await page.goto('/');
+	await page.locator('.gateway-settings > summary').click();
 	await expect(page.getByText('1 configured server')).toBeVisible();
 
 	await page.goto('/mcp/servers');

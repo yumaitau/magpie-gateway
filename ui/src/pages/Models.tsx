@@ -143,6 +143,7 @@ function ModelsEditorPage() {
 		useLlmConfigData();
 	const upsertResource = useUpsertConfigResource();
 	const deleteResource = useDeleteConfigResource();
+	const [savedModel, setSavedModel] = useState<string | null>(null);
 	const help = useSchemaHelp();
 	const [editing, setEditing] = useState<{
 		previousId?: string;
@@ -267,6 +268,7 @@ function ModelsEditorPage() {
 	}
 
 	function resetSaves() {
+		setSavedModel(null);
 		upsertResource.reset();
 		deleteResource.reset();
 	}
@@ -275,11 +277,17 @@ function ModelsEditorPage() {
 		if (hybrid) model.id ??= randomUuid();
 		upsertResource.mutate(
 			{ kind: 'llm.model', value: model, previousId },
-			{ onSuccess: closeModelEditor }
+			{
+				onSuccess: () => {
+					closeModelEditor();
+					setSavedModel(model.name);
+				}
+			}
 		);
 	}
 
 	function deleteModel(id: string) {
+		setSavedModel(null);
 		deleteResource.mutate(
 			{ kind: 'llm.model', id },
 			{
@@ -291,11 +299,17 @@ function ModelsEditorPage() {
 	function saveVirtualModel(model: LlmVirtualModel, previousName?: string) {
 		upsertResource.mutate(
 			{ kind: 'llm.virtualModel', value: model, previousId: previousName },
-			{ onSuccess: closeVirtualModelEditor }
+			{
+				onSuccess: () => {
+					closeVirtualModelEditor();
+					setSavedModel(model.name);
+				}
+			}
 		);
 	}
 
 	function deleteVirtualModel(name: string) {
+		setSavedModel(null);
 		deleteResource.mutate(
 			{ kind: 'llm.virtualModel', id: name },
 			{
@@ -328,7 +342,21 @@ function ModelsEditorPage() {
 					{saveError}
 				</StatusBanner>
 			) : null}
-			{saved ? <StatusBanner state="ok" title="Configuration saved" /> : null}
+			{saved || savedModel ? (
+				<StatusBanner
+					state="ok"
+					title="Configuration saved"
+					action={
+						savedModel ? (
+							<Link className="button" to="/llm/playground" search={{ model: savedModel }}>
+								Try your model
+							</Link>
+						) : undefined
+					}
+				>
+					{savedModel ? 'Send a prompt in the playground to check the connection.' : null}
+				</StatusBanner>
+			) : null}
 
 			<Panel>
 				{isLoading ? (
@@ -751,27 +779,6 @@ function ModelEditor(props: {
 				</div>
 			</details>
 
-			<div className="form-grid">
-				<Field
-					label="Incoming model match"
-					tooltip={props.help.field<LlmModel>(
-						'LocalLLMModels',
-						'name',
-						'The model name matched from incoming requests. Use an exact name like gpt-4.1-mini or a wildcard like openai/*.'
-					)}
-				>
-					<input
-						value={model.name}
-						onChange={event => {
-							const name = event.target.value;
-							setAutoModelMatch(!name.trim() || name === defaultIncomingModelMatch(model.provider));
-							setModel({ ...model, name });
-						}}
-						placeholder={model.provider ? defaultIncomingModelMatch(model.provider) : 'openai/*'}
-					/>
-				</Field>
-			</div>
-
 			<ProviderConfigEditor
 				provider={model.provider}
 				params={model.params}
@@ -802,19 +809,54 @@ function ModelEditor(props: {
 
 			{providerSelected ? (
 				<>
-					<UpstreamModelFields
-						mode={upstreamMode}
-						explicitModel={explicitModel}
-						customModelExpression={customModelExpression}
-						gatewayModelName={model.name}
-						provider={
-							model.provider ? resolvedProviderLabel(model.provider, props.providers) : null
-						}
-						help={props.help}
-						setMode={setUpstreamMode}
-						setExplicitModel={setExplicitModel}
-						setCustomModelExpression={setCustomModelExpression}
-					/>
+					<details className="schema-details model-routing" open={Boolean(props.previousId)}>
+						<summary>
+							Model routing <span className="muted-copy">{model.name}</span>
+						</summary>
+						<p className="muted-copy">
+							The default routes models from this provider. Change it to use a custom name or a
+							specific upstream model.
+						</p>
+
+						<div className="form-grid">
+							<Field
+								label="Incoming model match"
+								tooltip={props.help.field<LlmModel>(
+									'LocalLLMModels',
+									'name',
+									'The model name matched from incoming requests. Use an exact name like gpt-4.1-mini or a wildcard like openai/*.'
+								)}
+							>
+								<input
+									value={model.name}
+									onChange={event => {
+										const name = event.target.value;
+										setAutoModelMatch(
+											!name.trim() || name === defaultIncomingModelMatch(model.provider)
+										);
+										setModel({ ...model, name });
+									}}
+									placeholder={
+										model.provider ? defaultIncomingModelMatch(model.provider) : 'openai/*'
+									}
+								/>
+							</Field>
+						</div>
+
+						<UpstreamModelFields
+							mode={upstreamMode}
+							explicitModel={explicitModel}
+							customModelExpression={customModelExpression}
+							gatewayModelName={model.name}
+							provider={
+								model.provider ? resolvedProviderLabel(model.provider, props.providers) : null
+							}
+							help={props.help}
+							setMode={setUpstreamMode}
+							setExplicitModel={setExplicitModel}
+							setCustomModelExpression={setCustomModelExpression}
+						/>
+					</details>
 
 					<CollapsiblePolicySection
 						icon={<SlidersHorizontal size={17} />}

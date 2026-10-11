@@ -184,14 +184,7 @@ export function Shell() {
 					)}
 				</Link>
 				<nav className="nav-list" aria-label="Primary">
-					{navGroups.map(group => (
-						<NavSection
-							key={group.title}
-							title={group.title}
-							items={group.items}
-							currentPath={router.location.pathname}
-						/>
-					))}
+					<Navigation groups={navGroups} currentPath={router.location.pathname} />
 				</nav>
 				<div className="sidebar-links">
 					{projectLinks.map(link => {
@@ -228,14 +221,7 @@ export function Shell() {
 							</button>
 							{mobileNavOpen ? (
 								<nav className="mobile-nav-menu" aria-label="Primary">
-									{navGroups.map(group => (
-										<MobileNavSection
-											key={group.title}
-											title={group.title}
-											items={group.items}
-											currentPath={router.location.pathname}
-										/>
-									))}
+									<Navigation groups={navGroups} currentPath={router.location.pathname} mobile />
 								</nav>
 							) : null}
 						</div>
@@ -500,6 +486,62 @@ function navigationGroups(options: {
 				]
 	});
 	return groups;
+}
+
+const essentialPaths = new Set([
+	'/',
+	'/account',
+	'/people',
+	'/llm/get-started',
+	'/llm/models',
+	'/llm/keys',
+	'/llm/playground',
+	'/llm/client-setup',
+	'/llm/logs',
+	'/settings',
+	'/governance/dashboard',
+	'/governance/approvals',
+	'/governance/audit'
+]);
+
+function Navigation(props: {
+	groups: ReadonlyArray<{ title: string; items: readonly NavItemConfig[] }>;
+	currentPath: string;
+	mobile?: boolean;
+}) {
+	const Section = props.mobile ? MobileNavSection : NavSection;
+	const primary = props.groups
+		.map(group => ({
+			...group,
+			items: group.items.filter(item => essentialPaths.has(item.to))
+		}))
+		.filter(group => group.items.length);
+	const advanced = props.groups
+		.map(group => ({
+			...group,
+			items: group.items.filter(item => !essentialPaths.has(item.to))
+		}))
+		.filter(group => group.items.length);
+	const activeAdvanced = advanced.some(group =>
+		group.items.some(item => navItemActive(item, props.currentPath))
+	);
+	return (
+		<>
+			{primary.map(group => (
+				<Section key={group.title} {...group} currentPath={props.currentPath} />
+			))}
+			{advanced.length > 0 && (
+				<details className="advanced-navigation" key={props.currentPath} open={activeAdvanced}>
+					<summary>
+						<SlidersHorizontal size={16} /> Advanced <ChevronDown size={14} />
+					</summary>
+					{advanced.map(group => (
+						<Section key={group.title} {...group} currentPath={props.currentPath} />
+					))}
+				</details>
+			)}
+		</>
+	);
 }
 
 function NavSection(props: {

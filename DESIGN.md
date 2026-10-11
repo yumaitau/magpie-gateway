@@ -38,3 +38,11 @@ Only short colour, border and background transitions for interaction feedback. R
 ## Account and governance navigation
 
 Workspace places My account and People first. The account menu repeats password and invitation entry points. All governance content uses the native shell, theme tokens, button and form styles. Public sign-in and invitation acceptance share those tokens and the supplied banner. Restricted users retain account access without receiving gateway configuration permissions.
+
+The home page provides an inline path from adding a model to trying a prompt and
+connecting a client. Gateway settings are collapsed below it. Keep everyday
+navigation visible and group specialist pages under Advanced, opening
+that group for active routes on desktop and mobile. Preserve permission filtering
+before grouping links. New model forms show the provider and credentials first;
+model naming and upstream routing live in a disclosure, expanded when editing an
+existing model. Configuring a model does not imply its connection has been tested.
