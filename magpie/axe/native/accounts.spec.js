@@ -5,7 +5,24 @@ test.skip(!base, 'MAGPIE_NATIVE_URL is not set');
 test.describe.configure({ mode: 'serial' });
 const adminPassword = process.env.MAGPIE_NATIVE_PASSWORD || 'local-preview-passphrase-12345';
 const tags = ['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa'];
-async function login(page,username='admin',password=adminPassword){await page.goto(`${base}/ui/login`);await page.getByLabel('Email or username').fill(username);await page.getByLabel('Password',{exact:true}).fill(password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).not.toHaveURL(/\/login$/);}
+async function login(page,username='admin',password=adminPassword){await page.goto(`${base}/ui/login`);await page.getByLabel('Email or username').fill(username);await page.getByLabel('Password',{exact:true}).fill(password);const [response]=await Promise.all([page.waitForResponse(r=>r.url()===`${base}/api/magpie/login`&&r.request().method()==='POST'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);expect(response.ok()).toBe(true);await expect(page).not.toHaveURL(/\/login$/);}
+
+test('signed-in users skip login on direct visits and client navigation',async({page})=>{
+ await login(page);
+ for(const path of ['/login','/ui/login','/ui/login?passwordChanged=1','/ui/login/']) {
+  await page.goto(`${base}${path}`);
+  await expect(page).toHaveURL(`${base}/ui/`);
+  await expect(page.getByLabel('Email or username')).toHaveCount(0);
+ }
+ await page.goto(`${base}/ui/reset-password`);
+ await page.getByRole('link',{name:'Back to sign in',exact:true}).click();
+ await expect(page).toHaveURL(`${base}/ui/`);
+ await expect(page.getByLabel('Email or username')).toHaveCount(0);
+ await page.request.post(`${base}/api/auth/logout`);
+ await page.goto(`${base}/login`);
+ await expect(page).toHaveURL(`${base}/ui/login`);
+ await expect(page.getByLabel('Email or username')).toBeVisible();
+});
 
 test('all governance screens stay in the native shell and pass accessibility checks',async({page})=>{
  await login(page);
@@ -27,6 +44,7 @@ test('invite, accept, sign in, change password and recover within one UI',async(
  await page.getByLabel('Colleague’s name').fill('Test Colleague');await page.getByLabel('Email address',{exact:true}).fill(email);await page.getByLabel('Viewer group',{exact:false}).check();await page.getByRole('button',{name:'Create invitation',exact:true}).click();await expect(page.getByLabel('Private account link')).toBeVisible();const invitation=await page.getByLabel('Private account link').inputValue();
  const context=await browser.newContext();const colleague=await context.newPage();await colleague.goto(invitation);await colleague.getByLabel('New password',{exact:true}).fill(password);await colleague.getByLabel('Confirm new password',{exact:true}).fill(password);await colleague.getByRole('button',{name:'Set password',exact:true}).click();await expect(colleague.getByText('Your password has been saved. Sign in to continue.')).toBeVisible();await login(colleague,email,password);await expect(colleague).toHaveURL(`${base}/ui/account`);
  await expect(colleague.getByRole('link',{name:'People',exact:true})).toHaveCount(0);expect((await colleague.request.get(`${base}/api/config`)).status()).toBe(403);expect((await colleague.request.get(`${base}/api/magpie/people`)).status()).toBe(403);
+ for(const path of ['/login','/ui/login']) {await colleague.goto(`${base}${path}`);await expect(colleague).toHaveURL(`${base}/ui/account`);await expect(colleague.getByLabel('Email or username')).toHaveCount(0);}
  await colleague.getByLabel('Current password',{exact:true}).fill(password);await colleague.getByLabel('New password',{exact:true}).fill(next);await colleague.getByLabel('Confirm new password',{exact:true}).fill(next);await colleague.getByRole('button',{name:'Change password',exact:true}).click();await expect(colleague).toHaveURL(/passwordChanged=1/);await login(colleague,email,next);
  await colleague.goto(invitation);await colleague.getByLabel('New password',{exact:true}).fill(password);await colleague.getByLabel('Confirm new password',{exact:true}).fill(password);await colleague.getByRole('button',{name:'Set password',exact:true}).click();await expect(colleague.getByRole('alert')).toContainText('already used');
  await page.reload();const person=page.getByRole('row').filter({hasText:email}).first();await person.getByRole('button',{name:'Create password reset link',exact:true}).click();const reset=await page.getByLabel('Private account link').inputValue();await colleague.goto(reset);await colleague.getByLabel('New password',{exact:true}).fill(password);await colleague.getByLabel('Confirm new password',{exact:true}).fill(password);await colleague.getByRole('button',{name:'Set password',exact:true}).click();await expect(colleague.getByText('Your password has been saved. Sign in to continue.')).toBeVisible();await login(colleague,email,password);

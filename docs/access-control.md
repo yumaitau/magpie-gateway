@@ -60,8 +60,26 @@ changes are committed atomically with their audit events.
 Runtime mode, roles, groups and portal users are stored separately from imported
 policy documents. Policy imports and rollbacks cannot overwrite them. Imports
 are restricted to policy, DLP, approval, provider, agent and argument-rule
-documents. The import action can activate those documents directly and is
-therefore initially granted only to Owner and Admin.
+documents. Imports validate the entire batch, ignore supplied authors and revision
+numbers, and use the normal second-person approval setting. Imported approval
+records always enter the approval queue as pending, even if the file says approved.
+The import action is initially granted only to Owner and Admin. Only active
+document upserts are accepted; inactive records and duplicate IDs are rejected.
+
+Approving a request checks both its recorded submitter and its business owner.
+Only pending, active, valid requests can be approved. Invalid or expired dates
+never grant access, and inactive approval records are ignored by enforcement.
+Revisions created against an older document are rejected when reviewed, allowing
+the author to submit a fresh change. Rollback requires permission for the specific
+document type, operates only on its latest active revision, and creates a new
+revision through the approval gate. Kill-switch changes remain immediate; approval
+record rollbacks always need a second person. Revision and document writes are atomic.
+
+Both login URLs redirect valid sessions to their permitted home screen. Revoked
+or invalid sessions can still reach sign-in. The browser also checks the session
+before rendering login after in-app navigation.
+SSO attempts expire after ten minutes and their callback must carry the same
+HttpOnly, SameSite login-state cookie issued to the initiating browser.
 
 Back up the SQLite database to preserve access configuration and users; the
 policy JSON export does not include these runtime controls. The new tables are

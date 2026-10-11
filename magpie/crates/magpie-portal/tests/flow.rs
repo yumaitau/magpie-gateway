@@ -67,7 +67,8 @@ fn client(base: &str) -> (Client, Arc<Jar>) {
 	let client = Client::builder()
 		.cookie_provider(jar.clone())
 		.redirect(reqwest::redirect::Policy::none())
-		.timeout(Duration::from_secs(5))
+		// Password hashing competes for CPU on shared development/CI runners.
+		.timeout(Duration::from_secs(20))
 		.build()
 		.expect("client");
 	let _ = base;
@@ -160,6 +161,48 @@ fn mcp(
 		"phase": "request",
 		"actor": "alex.nguyen@example.gov.au"
 	})
+}
+
+#[tokio::test]
+async fn login_redirects_only_valid_sessions_and_does_not_cache_the_redirect() {
+	let base = spawn(false).await;
+	let (client, jar) = client(&base);
+	assert_eq!(
+		client
+			.get(format!("{base}/login"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	login(&client, &base, "alex").await;
+	let cookie = jar.cookies(&base.parse().unwrap()).unwrap();
+	let response = client
+		.get(format!("{base}/login?returnTo=https://example.invalid"))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(response.status(), StatusCode::SEE_OTHER);
+	assert_eq!(response.headers()[LOCATION], "/dashboard");
+	assert_eq!(response.headers()["cache-control"], "no-store");
+	assert!(response.headers().contains_key(SET_COOKIE));
+	client
+		.post(format!("{base}/api/auth/logout"))
+		.send()
+		.await
+		.unwrap();
+	// A cookie still present after server-side revocation must not cause a loop.
+	for value in [cookie.to_str().unwrap(), "magpie_session=invalid"] {
+		let response = client
+			.get(format!("{base}/login"))
+			.header("cookie", value)
+			.send()
+			.await
+			.unwrap();
+		assert_eq!(response.status(), StatusCode::OK);
+		assert!(response.text().await.unwrap().contains("Sign in"));
+	}
 }
 
 #[tokio::test]
@@ -295,7 +338,7 @@ async fn approver_cannot_approve_their_own_request() {
 		.form(&[
 			("name", "example_own"),
 			("kind", "tool"),
-			("business_owner", "Alex Nguyen"),
+			("business_owner", "A different business owner"),
 			("purpose", "Example only."),
 			("classification", "OFFICIAL"),
 			("expires_on", "2027-06-01"),
@@ -2404,4 +2447,356 @@ async fn dlp_tuning_requires_edit_permission_and_rejects_invalid_exceptions() {
 	] {
 		assert_eq!(admin.post(format!("{base}/api/magpie/dlp/save")).json(&json!({"kind":kind,"action":"log","enabled":true,"expectedRevision":0,"exactValue":value,"exceptionLabel":label})).send().await.unwrap().status(),StatusCode::BAD_REQUEST);
 	}
+}
+
+async fn exported(client: &Client, base: &str) -> serde_json::Value {
+	client
+		.get(format!("{base}/api/export"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap()
+}
+async fn pending_ids(client: &Client, base: &str) -> Vec<String> {
+	let html = client
+		.get(format!("{base}/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	html
+		.split("/revisions/")
+		.skip(1)
+		.map(|s| s.split('/').next().unwrap().to_string())
+		.collect()
+}
+
+#[tokio::test]
+async fn imports_require_review_ignore_forged_authorship_and_validate_the_whole_batch() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (reviewer, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&reviewer, &base, "alex").await;
+	let original = exported(&admin, &base).await;
+	let mut approval = original["documents"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|d| d["id"] == "approval-model")
+		.unwrap()
+		.clone();
+	approval["id"] = json!("imported-model");
+	approval["body"]["id"] = json!("imported-model");
+	approval["body"]["name"] = json!("imported-model");
+	approval["updatedBy"] = json!("forged@example.com");
+	let dlp = json!({"kind":"dlp_rule","id":"default-email","body":{"id":"default-email","kind":"email","action":"allow","enabled":true},"revision":999,"updatedAt":"2000-01-01T00:00:00Z","updatedBy":"forged@example.com","active":true});
+	let invalid = admin
+		.post(format!("{base}/api/import"))
+		.json(&json!({"documents":[approval.clone(),{"kind":"policy"}]}))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+	assert!(
+		!exported(&admin, &base)
+			.await
+			.to_string()
+			.contains("imported-model")
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/import"))
+			.json(&json!({"documents":[approval,dlp]}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::NO_CONTENT
+	);
+	let docs = exported(&admin, &base).await;
+	let approval = docs["documents"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|d| d["id"] == "imported-model")
+		.unwrap();
+	assert_eq!(approval["body"]["status"], "pending");
+	assert_ne!(approval["updatedBy"], "forged@example.com");
+	assert_eq!(approval["revision"], 1);
+	assert_eq!(
+		admin
+			.post(format!("{base}/approvals/imported-model/approve"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/approvals/imported-model/approve"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/approvals/imported-model/approve"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::CONFLICT
+	);
+	let settings: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let email = settings["rules"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|r| r["kind"] == "email")
+		.unwrap();
+	assert_eq!(email["action"], "redact");
+	assert_eq!(email["pending"], true);
+	let ids = pending_ids(&admin, &base).await;
+	assert_eq!(ids.len(), 1);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/revisions/{}/approve", ids[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let docs = exported(&admin, &base).await;
+	let email = docs["documents"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|d| d["id"] == "default-email")
+		.unwrap();
+	assert_eq!(email["body"]["action"], "allow");
+	assert_eq!(email["revision"], 1);
+}
+
+#[tokio::test]
+async fn stale_revisions_cannot_overwrite_changes_and_rollback_requires_review() {
+	let base = spawn(false).await;
+	let (author, _) = client(&base);
+	let (reviewer, _) = client(&base);
+	login(&author, &base, "alex").await;
+	login(&reviewer, &base, "sam").await;
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/access/roles"))
+			.form(&[
+				("id", "policy-editor"),
+				("name", "DLP editor"),
+				("permission.readPolicies", "1"),
+				("permission.editDlp", "1"),
+				("permission.exportPolicy", "1")
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	for action in ["log", "block"] {
+		assert_eq!(
+			author
+				.post(format!("{base}/dlp/rules"))
+				.form(&[("kind", "email"), ("action", action)])
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::SEE_OTHER
+		);
+	}
+	let ids = pending_ids(&author, &base).await;
+	assert_eq!(ids.len(), 2);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/revisions/{}/approve", ids[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/revisions/{}/approve", ids[1]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::CONFLICT
+	);
+	assert!(pending_ids(&author, &base).await.is_empty());
+	assert_eq!(
+		author
+			.post(format!("{base}/revisions/{}/rollback", ids[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let docs = exported(&author, &base).await;
+	let email = docs["documents"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|d| d["id"] == "default-email")
+		.unwrap();
+	assert_eq!(email["body"]["action"], "log");
+	let rollback = pending_ids(&author, &base).await;
+	assert_eq!(rollback.len(), 1);
+	assert_eq!(
+		author
+			.post(format!("{base}/revisions/{}/approve", rollback[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		reviewer
+			.post(format!("{base}/revisions/{}/approve", rollback[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let docs = exported(&author, &base).await;
+	let email = docs["documents"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|d| d["id"] == "default-email")
+		.unwrap();
+	assert_eq!(email["revision"], 2);
+	assert_eq!(
+		author
+			.post(format!("{base}/revisions/{}/rollback", ids[0]))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::CONFLICT
+	);
+}
+
+#[tokio::test]
+async fn inactive_approved_models_are_not_authorised() {
+	let path = std::env::temp_dir().join(format!("magpie-inactive-{}.sqlite", magpie::new_id()));
+	let store = magpie::store::Store::open_path(path.to_str().unwrap()).unwrap();
+	let approval = magpie::approvals::Approval {
+		id: "inactive-model".into(),
+		kind: magpie::approvals::ItemKind::Model,
+		name: "inactive-model".into(),
+		business_owner: "Example owner".into(),
+		purpose: "Test".into(),
+		classification: "OFFICIAL".into(),
+		expires_on: "2099-01-01".into(),
+		status: magpie::approvals::ApprovalStatus::Approved,
+		use_case: magpie::register::UseCase::example(),
+	};
+	store
+		.put_document(&magpie::store::Document {
+			kind: "approval".into(),
+			id: approval.id.clone(),
+			body: json!(approval),
+			revision: 1,
+			updated_at: chrono::Utc::now().to_rfc3339(),
+			updated_by: "test".into(),
+			active: false,
+		})
+		.unwrap();
+	drop(store);
+	let mut settings = config(BreakGlassConfig::default(), false);
+	settings.seed_examples = false;
+	settings.database_path = path.to_str().unwrap().into();
+	let base = spawn_with(settings).await;
+	let (client, _) = client(&base);
+	let result: serde_json::Value = client
+		.post(format!("{base}/mcp/check"))
+		.json(&mcp(
+			None,
+			"inactive-model",
+			"ap-southeast-2",
+			"inactive-model",
+			"hello",
+		))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(result["decision"], "reject");
+	assert!(result["reason"].as_str().unwrap().contains("not approved"));
+	std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn sso_callback_is_bound_to_the_browser_that_started_login() {
+	let base = spawn(false).await;
+	let (initiator, _) = client(&base);
+	let (other, _) = client(&base);
+	let start = initiator
+		.get(format!("{base}/api/auth/start"))
+		.send()
+		.await
+		.unwrap();
+	assert!(
+		start.headers()[SET_COOKIE]
+			.to_str()
+			.unwrap()
+			.contains("HttpOnly; SameSite=Lax; Path=/; Max-Age=600")
+	);
+	let url = reqwest::Url::parse(start.headers()[LOCATION].to_str().unwrap()).unwrap();
+	let state = url
+		.query_pairs()
+		.find(|(k, _)| k == "state")
+		.unwrap()
+		.1
+		.into_owned();
+	let continued = initiator
+		.post(format!("{base}/mock-idp/authorize"))
+		.form(&[("state", state.as_str()), ("who", "alex")])
+		.send()
+		.await
+		.unwrap();
+	let callback = absolute(&base, continued.headers()[LOCATION].to_str().unwrap());
+	let refused = other.get(&callback).send().await.unwrap();
+	assert!(!refused.headers().contains_key(SET_COOKIE));
+	assert!(refused.text().await.unwrap().contains("another browser"));
+	// A mismatched browser must not consume the legitimate browser's state or code.
+	let accepted = initiator.get(&callback).send().await.unwrap();
+	assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
+	assert!(
+		accepted.headers()[SET_COOKIE]
+			.to_str()
+			.unwrap()
+			.starts_with("magpie_session=")
+	);
 }

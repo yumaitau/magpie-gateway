@@ -71,8 +71,8 @@ pub fn effective_status(approval: &Approval, today: NaiveDate) -> ApprovalStatus
 		return approval.status;
 	}
 	match NaiveDate::parse_from_str(&approval.expires_on, "%Y-%m-%d") {
-		Ok(expiry) if expiry < today => ApprovalStatus::Expired,
-		_ => ApprovalStatus::Approved,
+		Ok(expiry) if expiry >= today => ApprovalStatus::Approved,
+		_ => ApprovalStatus::Expired,
 	}
 }
 
@@ -120,6 +120,7 @@ mod tests {
 		let items = vec![
 			sample(ApprovalStatus::Pending, "2027-01-01"),
 			sample(ApprovalStatus::Approved, "2026-01-01"),
+			sample(ApprovalStatus::Approved, "invalid"),
 		];
 		assert!(!is_approved(
 			&items,

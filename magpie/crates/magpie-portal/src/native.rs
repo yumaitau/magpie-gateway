@@ -31,16 +31,38 @@ pub fn routes() -> Router<AppState> {
 		.route("/assets/magpie/{*path}", get(asset))
 }
 
-pub async fn home(State(state): State<AppState>, headers: HeaderMap) -> Redirect {
+pub(super) fn redirect_signed_in(state: &AppState, headers: &HeaderMap) -> Option<Response> {
+	let (session, cookie) = session_from(state, headers).ok()?;
 	let native = !state.inner.config.gateway_admin_url.is_empty()
-		&& session_from(&state, &headers)
-			.is_ok_and(|(s, _)| access::allows(&state, &s, Permission::ReadGatewayConfig));
-	Redirect::to(if native {
+		&& access::allows(state, &session, Permission::ReadGatewayConfig);
+	let mut response = Redirect::to(if native {
 		"/ui/"
 	} else if !state.inner.config.gateway_ui_dir.is_empty() {
 		"/ui/account"
 	} else {
 		"/dashboard"
+	})
+	.into_response();
+	response
+		.headers_mut()
+		.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+	response.headers_mut().insert(
+		header::SET_COOKIE,
+		session_cookie(&cookie, state.inner.config.cookie_secure)
+			.parse()
+			.unwrap(),
+	);
+	Some(response)
+}
+
+pub async fn home(State(state): State<AppState>, headers: HeaderMap) -> Response {
+	redirect_signed_in(&state, &headers).unwrap_or_else(|| {
+		Redirect::to(if !state.inner.config.gateway_ui_dir.is_empty() {
+			"/ui/account"
+		} else {
+			"/dashboard"
+		})
+		.into_response()
 	})
 }
 
@@ -211,6 +233,11 @@ fn changed_actions(before: &Value, after: &Value) -> Vec<Permission> {
 async fn proxy(State(state): State<AppState>, request: Request) -> Response {
 	let path = request.uri().path();
 	if request.method() == Method::GET && !state.inner.config.gateway_ui_dir.is_empty() {
+		if path.trim_end_matches('/') == "/ui/login"
+			&& let Some(response) = redirect_signed_in(&state, request.headers())
+		{
+			return response;
+		}
 		let public = matches!(
 			path,
 			"/ui/login" | "/ui/accept-invitation" | "/ui/reset-password"

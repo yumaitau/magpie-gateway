@@ -83,6 +83,7 @@ struct PendingLogin {
 	challenge: String,
 	verifier: String,
 	nonce: String,
+	expires_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -360,7 +361,10 @@ fn login_error(state: &AppState, error: &str) -> Response {
 	.into_response()
 }
 
-async fn login(State(state): State<AppState>) -> Response {
+async fn login(State(state): State<AppState>, headers: HeaderMap) -> Response {
+	if let Some(response) = native::redirect_signed_in(&state, &headers) {
+		return response;
+	}
 	if !state.inner.config.gateway_ui_dir.is_empty() {
 		return Redirect::to("/ui/login").into_response();
 	}
@@ -444,15 +448,36 @@ async fn auth_start(State(state): State<AppState>, headers: HeaderMap) -> Respon
 		&pkce,
 		"openid profile email",
 	);
-	state.inner.pending.lock().expect("pending").insert(
+	let mut pending = state.inner.pending.lock().expect("pending");
+	pending.retain(|_, attempt| attempt.expires_at > Utc::now());
+	pending.insert(
 		pkce.state.clone(),
 		PendingLogin {
 			challenge: pkce.challenge,
 			verifier: pkce.verifier,
 			nonce: pkce.nonce,
+			expires_at: Utc::now() + chrono::Duration::minutes(10),
 		},
 	);
-	Redirect::to(&url).into_response()
+	let mut response = Redirect::to(&url).into_response();
+	response
+		.headers_mut()
+		.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+	response.headers_mut().insert(
+		header::SET_COOKIE,
+		format!(
+			"magpie_login={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600{}",
+			pkce.state,
+			if state.inner.config.cookie_secure {
+				"; Secure"
+			} else {
+				""
+			}
+		)
+		.parse()
+		.unwrap(),
+	);
+	response
 }
 
 async fn auth_callback(
@@ -470,6 +495,14 @@ async fn auth_callback(
 	let (Some(code), Some(login_state)) = (query.code.as_deref(), query.state.as_deref()) else {
 		return login_error(&state, "The identity provider did not return a code.");
 	};
+	if !read_cookie(&headers, "magpie_login")
+		.is_some_and(|cookie| identity::constant_time_eq(cookie.as_bytes(), login_state.as_bytes()))
+	{
+		return login_error(
+			&state,
+			"This login attempt has expired or belongs to another browser.",
+		);
+	}
 	let pending = state
 		.inner
 		.pending
@@ -479,6 +512,9 @@ async fn auth_callback(
 	let Some(pending) = pending else {
 		return login_error(&state, "This login attempt has expired.");
 	};
+	if pending.expires_at <= Utc::now() {
+		return login_error(&state, "This login attempt has expired.");
+	}
 	if !state.inner.config.mock_idp {
 		return match oidc_exchange(&state, &headers, code, &pending).await {
 			Ok(claims) => finish_login(&state, &headers, &claims, false, None),
@@ -1435,7 +1471,11 @@ async fn dlp_page(
 <h2>Test Australian privacy controls</h2>
 <p>Use synthetic examples. Test text is not saved to the audit log or sent to an AI model. TFNs detected by context or a candidate checksum are not verified with the ATO.</p>
 <form method="post" action="/dlp"><label for="text">Text to check</label><textarea id="text" name="text" rows="4" required {disabled}></textarea><button type="submit" {disabled}>Run DLP</button></form>"#,
-		table(&["Detector", "Effective state", "Change or disable"], &rows),
+		table_with_actions(
+			&["Detector", "Effective state", "Change or disable"],
+			&rows,
+			&[2]
+		),
 		pending_html(&state)
 	);
 	let notice = match query.saved.as_deref() {
@@ -1629,7 +1669,7 @@ async fn audit_page(
 		ui::esc(&filter.decision),
 		ui::esc(&filter.actor),
 		ui::esc(&filter.kind),
-		table(
+		table_with_actions(
 			&[
 				"When",
 				"Kind",
@@ -1641,7 +1681,8 @@ async fn audit_page(
 				"Reason",
 				"DLP tuning"
 			],
-			&rows_audit_full(&events)
+			&rows_audit_full(&events),
+			&[8]
 		)
 	);
 	page(&state, &headers, "/audit", "Audit log", body)
@@ -1711,7 +1752,7 @@ async fn approvals_page(State(state): State<AppState>, headers: HeaderMap) -> Re
 <button type="submit">Queue request</button>
 </form>
 <p><a href="/use-cases.csv">Export use-case register (CSV)</a></p>"#,
-		table(
+		table_with_actions(
 			&[
 				"Name",
 				"Kind",
@@ -1722,7 +1763,8 @@ async fn approvals_page(State(state): State<AppState>, headers: HeaderMap) -> Re
 				"Status",
 				"Action"
 			],
-			&rows
+			&rows,
+			&[7]
 		)
 	);
 	page(&state, &headers, "/approvals", "Approvals", body)
@@ -1741,10 +1783,28 @@ async fn approve(
 	let Some(doc) = store.get_document("approval", &id).ok().flatten() else {
 		return (StatusCode::NOT_FOUND, "No such approval").into_response();
 	};
-	let mut approval: Approval = serde_json::from_value(doc.body.clone())
-		.map_err(|error| error.to_string())
-		.unwrap_or_else(|_| placeholder_approval(&id));
-	if approval.business_owner.eq_ignore_ascii_case(&session.email)
+	let Ok(mut approval) = serde_json::from_value::<Approval>(doc.body.clone()) else {
+		return (StatusCode::BAD_REQUEST, "The approval record is invalid.").into_response();
+	};
+	if !doc.active || approval.status != ApprovalStatus::Pending {
+		return (
+			StatusCode::CONFLICT,
+			"Only an active pending request can be approved.",
+		)
+			.into_response();
+	}
+	if magpie::approvals::validate(&approval).is_err()
+		|| chrono::NaiveDate::parse_from_str(&approval.expires_on, "%Y-%m-%d")
+			.is_ok_and(|expiry| expiry < Utc::now().date_naive())
+	{
+		return (
+			StatusCode::BAD_REQUEST,
+			"Correct the request and expiry before approving it.",
+		)
+			.into_response();
+	}
+	if doc.updated_by.eq_ignore_ascii_case(&session.email)
+		|| approval.business_owner.eq_ignore_ascii_case(&session.email)
 		|| approval.business_owner.eq_ignore_ascii_case(&session.name)
 	{
 		return (
@@ -1759,7 +1819,13 @@ async fn approve(
 	updated.revision += 1;
 	updated.updated_by = session.email.clone();
 	updated.updated_at = Utc::now().to_rfc3339();
-	store.put_document(&updated).ok();
+	if store.put_document(&updated).is_err() {
+		return (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"Could not save approval.",
+		)
+			.into_response();
+	}
 	if approval.kind == ItemKind::Tool {
 		let _ = store.put_document(&Document {
 			kind: "tool".into(),
@@ -1882,23 +1948,55 @@ async fn approve_revision(
 	if let Err(error) = magpie::change::approve(&mut revision, &session.email) {
 		return (StatusCode::FORBIDDEN, error.to_string()).into_response();
 	}
-	store.update_revision(&revision).ok();
-	let current = store
-		.get_document(&revision.kind, &revision.doc_id)
-		.ok()
-		.flatten();
+	let current = match store.get_document(&revision.kind, &revision.doc_id) {
+		Ok(doc) => doc,
+		Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+	};
+	if current.as_ref().map(|d| &d.body).unwrap_or(&json!({})) != &revision.before
+		|| current.as_ref().is_some_and(|d| {
+			chrono::DateTime::parse_from_rfc3339(&d.updated_at)
+				.map_or(true, |updated| updated > revision.created_at)
+		}) {
+		revision.status = magpie::change::RevisionStatus::Rejected;
+		if store.update_revision(&revision).is_err() {
+			return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+		}
+		let _ = store.append_audit(&AuditEvent::new(
+			"policy",
+			&session.email,
+			"",
+			"",
+			"",
+			"reject",
+			"Stale revision rejected; submit the change again against the current document.",
+			json!({"revision":revision.id}),
+		));
+		return (
+			StatusCode::CONFLICT,
+			"The active document changed. This stale revision was rejected; submit the change again.",
+		)
+			.into_response();
+	}
 	let next_revision = current.as_ref().map(|doc| doc.revision + 1).unwrap_or(1);
-	store
-		.put_document(&Document {
-			kind: revision.kind.clone(),
-			id: revision.doc_id.clone(),
-			body: revision.after.clone(),
-			revision: next_revision,
-			updated_at: Utc::now().to_rfc3339(),
-			updated_by: session.email.clone(),
-			active: true,
-		})
-		.ok();
+	let document = Document {
+		kind: revision.kind.clone(),
+		id: revision.doc_id.clone(),
+		body: revision.after.clone(),
+		revision: next_revision,
+		updated_at: Utc::now().to_rfc3339(),
+		updated_by: session.email.clone(),
+		active: true,
+	};
+	if store
+		.save_changes(&[(revision.clone(), Some(document))])
+		.is_err()
+	{
+		return (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"Could not activate the revision.",
+		)
+			.into_response();
+	}
 	drop(store);
 	let _ = record_audit(
 		&state,
@@ -1918,10 +2016,11 @@ async fn rollback_revision(
 	headers: HeaderMap,
 	Path(id): Path<String>,
 ) -> Response {
-	let session = match require(&state, &headers, Permission::EditPolicy) {
-		Ok(session) => session,
+	let session = match session_from(&state, &headers) {
+		Ok((session, _)) => session,
 		Err(response) => return response,
 	};
+	let approval_required = second_person(&state);
 	let store = state.inner.store.lock().expect("db");
 	let Some(revision) = store.get_revision(&id).ok().flatten() else {
 		return (StatusCode::NOT_FOUND, "No such revision").into_response();
@@ -1951,19 +2050,56 @@ async fn rollback_revision(
 		)
 			.into_response();
 	}
-	let rolled = magpie::change::rollback_of(&revision, &session.email, Utc::now());
-	store.append_revision(&rolled).ok();
-	store
-		.put_document(&Document {
-			kind: rolled.kind.clone(),
-			id: rolled.doc_id.clone(),
-			body: rolled.after.clone(),
-			revision: 1,
-			updated_at: Utc::now().to_rfc3339(),
-			updated_by: session.email.clone(),
-			active: true,
-		})
-		.ok();
+	let current = match store.get_document(&revision.kind, &revision.doc_id) {
+		Ok(Some(doc)) => doc,
+		_ => {
+			return (
+				StatusCode::CONFLICT,
+				"There is no active document to roll back.",
+			)
+				.into_response();
+		},
+	};
+	if !current.active || current.body != revision.after {
+		return (
+			StatusCode::CONFLICT,
+			"Only the current document can be rolled back.",
+		)
+			.into_response();
+	}
+	let history = match store.list_revisions(&revision.kind, &revision.doc_id) {
+		Ok(history) => history,
+		Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+	};
+	if history
+		.iter()
+		.rev()
+		.find(|r| r.status == magpie::change::RevisionStatus::Active)
+		.is_none_or(|latest| latest.id != revision.id)
+	{
+		return (
+			StatusCode::CONFLICT,
+			"Only the latest active revision can be rolled back.",
+		)
+			.into_response();
+	}
+	// A rollback is a new change and follows the same second-person gate.
+	if save_revision_in_store(
+		&store,
+		&revision.kind,
+		&revision.doc_id,
+		&session.email,
+		revision.before.clone(),
+		(revision.kind != "kill" && approval_required) || revision.kind == "approval",
+	)
+	.is_err()
+	{
+		return (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"Could not save rollback.",
+		)
+			.into_response();
+	}
 	drop(store);
 	let _ = record_audit(
 		&state,
@@ -1973,7 +2109,7 @@ async fn rollback_revision(
 		&revision.doc_id,
 		"",
 		"allow",
-		"revision rolled back",
+		"rollback change saved",
 	);
 	Redirect::to("/policies").into_response()
 }
@@ -2250,10 +2386,11 @@ async fn export_docs(State(state): State<AppState>, headers: HeaderMap) -> Respo
 		.export_documents()
 		.unwrap_or_default();
 	docs.retain(|doc| {
-		matches!(
-			doc.kind.as_str(),
-			"policy" | "dlp_rule" | "approval" | "provider" | "agent" | "argument_rule"
-		)
+		doc.active
+			&& matches!(
+				doc.kind.as_str(),
+				"policy" | "dlp_rule" | "approval" | "provider" | "agent" | "argument_rule"
+			)
 	});
 	Json(json!({"example": state.inner.config.demo, "documents": docs})).into_response()
 }
@@ -2282,11 +2419,98 @@ async fn import_docs(
 		)
 			.into_response();
 	}
-	let store = state.inner.store.lock().expect("db");
+	let approval_required = second_person(&state);
+	let mut documents = Vec::new();
+	let mut keys = std::collections::BTreeSet::new();
 	for item in items {
-		if let Ok(document) = serde_json::from_value::<Document>(item.clone()) {
-			store.put_document(&document).ok();
+		let Ok(mut document) = serde_json::from_value::<Document>(item.clone()) else {
+			return (
+				StatusCode::BAD_REQUEST,
+				"Every imported document must be valid.",
+			)
+				.into_response();
+		};
+		if document.id.trim().is_empty()
+			|| !document.active
+			|| !document.body.is_object()
+			|| !keys.insert((document.kind.clone(), document.id.clone()))
+		{
+			return (
+				StatusCode::BAD_REQUEST,
+				"Import active documents with unique, non-empty IDs and object bodies.",
+			)
+				.into_response();
 		}
+		if document.kind == "approval" {
+			let Ok(mut approval) = serde_json::from_value::<Approval>(document.body.clone()) else {
+				return (StatusCode::BAD_REQUEST, "Invalid approval document.").into_response();
+			};
+			if approval.id != document.id || magpie::approvals::validate(&approval).is_err() {
+				return (StatusCode::BAD_REQUEST, "Invalid approval fields or ID.").into_response();
+			}
+			// An imported status or author must never grant approval on its own.
+			approval.status = ApprovalStatus::Pending;
+			document.body = json!(approval);
+		} else if document.kind == "dlp_rule" {
+			let Ok(rule) = serde_json::from_value::<DlpRule>(document.body.clone()) else {
+				return (StatusCode::BAD_REQUEST, "Invalid DLP rule.").into_response();
+			};
+			if rule.id != document.id || rule.id != format!("default-{}", dlp::kind_name(rule.kind)) {
+				return (
+					StatusCode::BAD_REQUEST,
+					"DLP rules must use their detector's canonical ID.",
+				)
+					.into_response();
+			}
+		} else if document.kind == "argument_rule"
+			&& serde_json::from_value::<ArgumentRule>(document.body.clone()).is_err()
+		{
+			return (StatusCode::BAD_REQUEST, "Invalid argument rule.").into_response();
+		}
+		documents.push(document);
+	}
+	let store = state.inner.store.lock().expect("db");
+	let pending = match store.list_pending_revisions() {
+		Ok(pending) => pending,
+		Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+	};
+	let mut changes = Vec::new();
+	for mut document in documents {
+		if pending
+			.iter()
+			.any(|r| r.kind == document.kind && r.doc_id == document.id)
+		{
+			return (
+				StatusCode::CONFLICT,
+				"An imported document already has a pending change.",
+			)
+				.into_response();
+		}
+		let current = match store.get_document(&document.kind, &document.id) {
+			Ok(current) => current,
+			Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+		};
+		document.revision = current.as_ref().map(|d| d.revision + 1).unwrap_or(1);
+		document.updated_by = session.email.clone();
+		document.updated_at = Utc::now().to_rfc3339();
+		let revision = magpie::change::propose(
+			&document.kind,
+			&document.id,
+			&session.email,
+			current.map(|d| d.body).unwrap_or(json!({})),
+			document.body.clone(),
+			approval_required && document.kind != "approval",
+			Utc::now(),
+		);
+		let active = revision.status == magpie::change::RevisionStatus::Active;
+		changes.push((revision, active.then_some(document)));
+	}
+	if store.save_changes(&changes).is_err() {
+		return (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"Could not import the documents. No changes were applied.",
+		)
+			.into_response();
 	}
 	drop(store);
 	let _ = record_audit(
@@ -2825,6 +3049,7 @@ fn load_approvals(state: &AppState) -> Vec<Approval> {
 		.list_documents("approval")
 		.unwrap_or_default()
 		.iter()
+		.filter(|doc| doc.active)
 		.filter_map(|doc| serde_json::from_value(doc.body.clone()).ok())
 		.collect()
 }
@@ -2838,6 +3063,7 @@ fn load_argument_rules(state: &AppState) -> Vec<ArgumentRule> {
 		.list_documents("argument_rule")
 		.unwrap_or_default()
 		.iter()
+		.filter(|doc| doc.active)
 		.filter_map(|doc| serde_json::from_value(doc.body.clone()).ok())
 		.collect()
 }
@@ -2890,9 +3116,8 @@ fn save_revision_in_store(
 		require_approval,
 		Utc::now(),
 	);
-	store.append_revision(&revision)?;
-	if revision.status == magpie::change::RevisionStatus::Active {
-		store.put_document(&Document {
+	let document = if revision.status == magpie::change::RevisionStatus::Active {
+		Some(Document {
 			kind: kind.into(),
 			id: id.into(),
 			body: after,
@@ -2900,8 +3125,11 @@ fn save_revision_in_store(
 			updated_at: Utc::now().to_rfc3339(),
 			updated_by: actor.into(),
 			active: true,
-		})?;
-	}
+		})
+	} else {
+		None
+	};
+	store.save_changes(&[(revision.clone(), document)])?;
 	Ok(revision.status)
 }
 
@@ -3153,6 +3381,10 @@ fn placeholder_approval(id: &str) -> Approval {
 }
 
 fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
+	table_with_actions(headers, rows, &[])
+}
+
+fn table_with_actions(headers: &[&str], rows: &[Vec<String>], action_columns: &[usize]) -> String {
 	let head = headers
 		.iter()
 		.map(|header| format!("<th scope=\"col\">{}</th>", ui::esc(header)))
@@ -3162,8 +3394,9 @@ fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
 		.map(|row| {
 			let cells = row
 				.iter()
-				.map(|cell| {
-					if cell.starts_with("<form") {
+				.enumerate()
+				.map(|(index, cell)| {
+					if action_columns.contains(&index) && cell.starts_with("<form") {
 						format!("<td>{cell}</td>")
 					} else {
 						format!("<td>{}</td>", ui::esc(cell))
@@ -3297,7 +3530,11 @@ fn pending_html(state: &AppState) -> String {
 		.collect::<Vec<_>>();
 	format!(
 		"<h2>Pending changes</h2><p>The person who wrote a change cannot approve it.</p>{}",
-		table(&["Kind", "Document", "Author", "Diff", "Action"], &rows)
+		table_with_actions(
+			&["Kind", "Document", "Author", "Diff", "Action"],
+			&rows,
+			&[4]
+		)
 	)
 }
 
@@ -3388,6 +3625,21 @@ struct CallbackQuery {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn table_only_renders_forms_in_explicit_action_columns() {
+		let untrusted = "<form><img src=x onerror=alert(1)></form>";
+		let trusted = "<form method=post><button>Approve</button></form>";
+		let html = table_with_actions(
+			&["Name", "Action"],
+			&[vec![untrusted.into(), trusted.into()]],
+			&[1],
+		);
+		assert!(!html.contains(untrusted));
+		assert!(html.contains("&lt;form&gt;"));
+		assert!(html.contains(trusted));
+		assert!(!table(&["Name"], &[vec![untrusted.into()]]).contains(untrusted));
+	}
 
 	#[test]
 	fn bootstrap_allows_deployment_models_for_protected_traffic() {

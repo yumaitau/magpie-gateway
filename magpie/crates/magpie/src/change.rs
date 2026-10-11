@@ -92,7 +92,7 @@ pub fn approve(revision: &mut Revision, approver: &str) -> crate::Result<()> {
 			"Only a pending revision can be approved.".into(),
 		));
 	}
-	if approver == revision.actor {
+	if approver.trim().eq_ignore_ascii_case(revision.actor.trim()) {
 		return Err(crate::Error::Msg(
 			"The person who wrote the change cannot approve it.".into(),
 		));

@@ -64,6 +64,14 @@ const rootRoute = createRootRoute();
 const loginRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: '/login',
+	beforeLoad: async () => {
+		if (!isMagpie) return;
+		const session = await fetch('/api/magpie/session', {
+			credentials: 'same-origin',
+			cache: 'no-store'
+		}).catch(() => null);
+		if (session?.ok) throw redirect({ href: '/', reloadDocument: true, replace: true });
+	},
 	component: isMagpie ? MagpieLoginPage : LoginPage
 });
 

@@ -390,6 +390,23 @@ impl Store {
 		Ok(())
 	}
 
+	/// Keep revision status and the documents it activates consistent, including batch imports.
+	pub fn save_changes(&self, changes: &[(Revision, Option<Document>)]) -> Result<()> {
+		let transaction = self.conn.unchecked_transaction()?;
+		for (revision, document) in changes {
+			if self.get_revision(&revision.id)?.is_some() {
+				self.update_revision(revision)?;
+			} else {
+				self.append_revision(revision)?;
+			}
+			if let Some(document) = document {
+				self.put_document(document)?;
+			}
+		}
+		transaction.commit()?;
+		Ok(())
+	}
+
 	pub fn update_revision(&self, revision: &Revision) -> Result<()> {
 		self.conn.execute(
 			"UPDATE revisions SET status = ?1, approver = ?2, after_json = ?3 WHERE id = ?4",
@@ -628,6 +645,41 @@ pub fn postgres_placeholder_note() -> &'static str {
 mod tests {
 	use super::*;
 	use serde_json::json;
+
+	#[test]
+	fn revision_batches_roll_back_if_any_document_cannot_be_saved() {
+		let store = Store::open_memory().unwrap();
+		store.conn.execute_batch("CREATE TRIGGER reject_document BEFORE INSERT ON documents WHEN NEW.id = 'blocked' BEGIN SELECT RAISE(ABORT, 'unavailable'); END;").unwrap();
+		let changes: Vec<_> = ["first", "blocked"]
+			.into_iter()
+			.map(|id| {
+				let revision = crate::change::propose(
+					"policy",
+					id,
+					"author",
+					json!({}),
+					json!({"cel":"false"}),
+					false,
+					Utc::now(),
+				);
+				let document = Document {
+					kind: "policy".into(),
+					id: id.into(),
+					body: revision.after.clone(),
+					revision: 1,
+					updated_at: Utc::now().to_rfc3339(),
+					updated_by: "author".into(),
+					active: true,
+				};
+				(revision, Some(document))
+			})
+			.collect();
+		assert!(store.save_changes(&changes).is_err());
+		assert!(store.list_documents("policy").unwrap().is_empty());
+		for (revision, _) in changes {
+			assert!(store.get_revision(&revision.id).unwrap().is_none());
+		}
+	}
 
 	#[test]
 	fn guardrail_mode_and_audit_are_atomic() {
