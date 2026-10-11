@@ -45,7 +45,8 @@ permission; another administrator can perform that removal.
 
 Delete a group's role assignment before deleting that role. The Owner role
 always keeps all actions. Built-in roles other than Owner and their groups can
-be edited. Existing `MAGPIE_ROLE_*` mappings seed the initial groups; after that,
+be edited. Existing `MAGPIE_ROLE_*` mappings and the `Magpie.*` app roles created by
+`./magpie.sh sso` seed the initial groups; after that,
 the UI owns them. Changes survive restarts and redeployments.
 
 ## Enforcement and audit

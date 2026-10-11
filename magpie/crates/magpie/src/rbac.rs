@@ -127,7 +127,15 @@ impl AccessControl {
 					name: format!("{} group", role.as_str()),
 					roles: vec![(*id).into()],
 					members: vec![],
-					identity_groups: (*matches).clone(),
+					identity_groups: {
+						let mut groups = (*matches).clone();
+						// App-role values created by ./magpie.sh sso.
+						let app_role = format!("Magpie.{}", role.as_str().replace(' ', ""));
+						if !groups.contains(&app_role) {
+							groups.push(app_role);
+						}
+						groups
+					},
 				})
 				.collect(),
 		}
@@ -218,4 +226,33 @@ pub fn valid_id(id: &str) -> bool {
 		&& id
 			.bytes()
 			.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::identity::SessionCodec;
+	use std::time::Duration;
+
+	#[test]
+	fn deployment_app_roles_map_to_explicit_builtin_grants() {
+		let access = AccessControl::defaults(&RoleMap::default());
+		let codec = SessionCodec::new("test", Duration::from_secs(60), Duration::from_secs(600));
+		let (mut session, _) = codec
+			.issue(
+				"user",
+				"user@example.test",
+				"User",
+				vec![],
+				chrono::Utc::now(),
+				false,
+			)
+			.unwrap();
+		assert!(!access.allows(&session, Permission::ReadDashboard));
+		session.identity_groups = vec!["Magpie.Auditor".into()];
+		assert!(access.allows(&session, Permission::ReadAudit));
+		assert!(!access.allows(&session, Permission::ChangeEnforcement));
+		session.identity_groups = vec!["Magpie.Owner".into()];
+		assert!(ACTIONS.iter().all(|(p, _, _)| access.allows(&session, *p)));
+	}
 }
