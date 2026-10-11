@@ -367,11 +367,14 @@ export function MagpiePeoplePage() {
 function AuthFrame({ children }: { children: ReactNode }) {
 	return (
 		<main className="magpie-auth">
-			<img
-				className="magpie-auth-banner"
-				src="/assets/magpie/magpie-banner-v1.webp"
-				alt="Magpie Gateway. Australian ready."
-			/>
+			<div className="magpie-auth-art">
+				<img
+					src="/assets/magpie/magpie-portrait-v1.webp"
+					alt="Australian magpie framed by eucalyptus leaves."
+					width="1024"
+					height="1536"
+				/>
+			</div>
 			<section className="panel">
 				<img
 					className="magpie-auth-mark"

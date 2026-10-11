@@ -30,21 +30,36 @@
 	flex: none;
 }
 .magpie-auth {
-	max-width: 980px;
-	margin: 40px auto;
-	padding: 0 20px;
+	display: grid;
+	grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+	min-height: 100svh;
+	max-width: 1800px;
+	margin: 0 auto;
 }
-.magpie-auth-banner {
-	display: block;
+.magpie-auth-art {
+	position: relative;
+	min-height: 680px;
+	overflow: hidden;
+}
+.magpie-auth-art > img {
+	position: absolute;
+	inset: 0;
 	width: 100%;
-	height: auto;
-	border-radius: 10px;
-	margin-bottom: 24px;
+	height: 100%;
+	object-fit: cover;
+	object-position: center 58%;
 }
 .magpie-auth > .panel {
+	align-self: center;
+	width: 100%;
 	max-width: 560px;
-	margin: auto;
-	padding: 28px;
+	min-width: 0;
+	margin: 0 auto;
+	padding: clamp(24px, 4vw, 56px);
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
 }
 .magpie-auth-mark {
 	border-radius: 10px;
@@ -159,11 +174,18 @@
 }
 @media (max-width: 700px) {
 	.magpie-auth {
-		margin: 20px auto;
-		padding: 0 16px;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto 1fr;
+	}
+	.magpie-auth-art {
+		min-height: 0;
+		height: 260px;
+	}
+	.magpie-auth-art > img {
+		object-position: center 36%;
 	}
 	.magpie-auth > .panel {
-		padding: 20px;
+		padding: 28px 24px;
 	}
 	.magpie-governance input:not([type='checkbox']) {
 		width: 100%;

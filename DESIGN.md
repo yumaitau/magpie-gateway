@@ -26,7 +26,9 @@ The upstream Agentgateway UI in `ui/` is the application foundation. Build it wi
 
 The user-supplied `Glossy Magpie Emblem with Orange Ring.png` and
 `Magpie Gateway_ Sovereign AI, Australian Ready.png` now provide the product mark
-and sign-in/README banner. Home and operational dashboards have no artwork banner. Optimised WebP copies live alongside the original
+and README banner. Sign-in and account recovery use the original magpie portrait
+on the left with the form on the right; narrow screens stack the artwork above
+the form. Home and operational dashboards have no artwork banner. Optimised WebP copies live alongside the original
 portrait as `magpie-emblem-v1.webp` (256 × 256) and `magpie-banner-v1.webp`
 (2172 × 724). Preserve the full banner aspect ratio without cropping or text
 overlays; the operational mode indicator remains separate from artwork.
