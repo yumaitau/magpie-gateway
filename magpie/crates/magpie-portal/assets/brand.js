@@ -2,11 +2,6 @@
  * The native router, editors and playgrounds remain intact. */
 (() => {
   let session;
-  function link(item) {
-    const a = document.createElement('a');
-    a.href = item.href; a.textContent = item.label;
-    a.className = 'magpie-nav-link'; return a;
-  }
   function enhance() {
     if (!session) return;
     if (document.title !== 'Magpie Gateway') document.title = 'Magpie Gateway';
@@ -19,18 +14,6 @@
       const sub = document.createElement('small'); sub.textContent = 'GATEWAY'; name.append(sub);
       brand.prepend(mark, name);
     });
-    document.querySelectorAll('.nav-list, .mobile-nav-menu').forEach(nav => {
-      if (nav.querySelector('.magpie-nav')) return;
-      const section = document.createElement('section'); section.className = 'magpie-nav';
-      const label = document.createElement('h2'); label.textContent = 'MAGPIE GOVERNANCE'; section.append(label);
-      session.links.filter(item => ['/australia','/dlp','/policies','/approvals','/access','/audit','/settings'].includes(item.href)).forEach(item => section.append(link(item)));
-      nav.append(section);
-    });
-    const controls = document.querySelector('.topbar-controls');
-    if (controls && !controls.querySelector('.magpie-mode')) {
-      const mode = link({ href: '/settings', label: session.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement' });
-      mode.className = 'magpie-mode'; mode.title = 'Manage enforcement in Magpie Settings'; controls.prepend(mode);
-    }
     const main = document.querySelector('main.content');
     if (main && /^\/ui\/?$/.test(location.pathname) && !main.querySelector('.magpie-welcome')) {
       const hero = document.createElement('section'); hero.className = 'magpie-welcome'; hero.setAttribute('aria-label', 'Magpie Gateway');
@@ -44,12 +27,10 @@
   async function refresh() {
     try {
       const response = await fetch('/api/magpie/session', { credentials: 'same-origin' });
-      if (response.status === 401) { location.replace('/login'); return; }
+      if (response.status === 401) return;
       if (!response.ok) return;
       session = await response.json();
-      document.querySelectorAll('.magpie-mode').forEach(node => {
-        node.textContent = session.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement';
-      });
+
       enhance();
     } catch { /* Native API error handling remains visible. */ }
   }
@@ -58,6 +39,6 @@
     if (queued) return; queued = true;
     requestAnimationFrame(() => { queued = false; enhance(); });
   }).observe(document.body, { childList: true, subtree: true });
-  refresh();
+  if (!/^\/ui\/(login|accept-invitation|reset-password)/.test(location.pathname)) refresh();
   setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60000);
 })();

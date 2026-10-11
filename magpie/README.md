@@ -3,7 +3,7 @@
 # Magpie Gateway policy workspace
 
 This workspace is Yuma IT's addition. It does not modify the agentgateway
-proxy, controller or admin UI. The library in `crates/magpie` holds the
+proxy or controller. Its account and governance pages share the native admin UI. The library in `crates/magpie` holds the
 Australian DLP checks, approvals, sessions and audit records. The portal
 crate, when present, serves the admin pages and the guardrail webhook.
 
@@ -26,6 +26,11 @@ the same value in `x-magpie-webhook-token`. `MAGPIE_BOOTSTRAP_MODELS`
 `MAGPIE_APPROVED_PROTECTED` (`bedrock:model-id,...`) adds destinations
 allowed for PROTECTED traffic, merged into settings on every start.
 A `postgres://` URL is refused; use a SQLite file or `:memory:`.
+
+## Accounts and invitations
+
+Use **My account** to change your password and **People** to invite a colleague
+or create a password reset link. See [accounts and recovery](../docs/accounts.md).
 
 ## Log-only trials
 

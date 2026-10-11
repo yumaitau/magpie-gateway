@@ -3,6 +3,7 @@
 //! Telemetry, Presidio and audit sinks stay off unless settings name an endpoint.
 
 mod access;
+mod accounts;
 mod australia;
 mod native;
 mod ui;
@@ -25,7 +26,7 @@ use magpie::guardrail::{
 };
 use magpie::identity::{
 	self, BreakGlassConfig, IdClaims, OidcProviderKind, Permission, RoleMap, SessionCodec,
-	SessionRecord, issuer_for, roles_from_groups, start_pkce, verify_break_glass, verify_hs256,
+	SessionRecord, issuer_for, roles_from_groups, start_pkce, verify_hs256,
 };
 use magpie::presidio::{self, PresidioEntity};
 use magpie::register::{self, UseCase};
@@ -101,6 +102,7 @@ struct IssuedCode {
 }
 
 struct Inner {
+	login_dummy_hash: String,
 	gateway_client: reqwest::Client,
 	gateway_write: tokio::sync::Mutex<()>,
 	store: Mutex<Store>,
@@ -164,9 +166,12 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 			store.set_access_control(&access, "upgrade")?;
 		}
 	}
+	accounts::bootstrap(&store, &config)?;
+	let login_dummy_hash = identity::hash_password(&identity::start_pkce().verifier)?;
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
+			login_dummy_hash,
 			gateway_client: reqwest::Client::builder()
 				.redirect(reqwest::redirect::Policy::none())
 				.connect_timeout(Duration::from_secs(5))
@@ -179,11 +184,33 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 			codes: Mutex::new(HashMap::new()),
 			provider: Mutex::new(None),
 			directory: Mutex::new(Directory::default()),
-			limiter: RateLimiter::new(vec![ToolLimit {
-				tool: "example_search".into(),
-				max_calls: 30,
-				window_seconds: 60,
-			}]),
+			limiter: RateLimiter::new(vec![
+				ToolLimit {
+					tool: "example_search".into(),
+					max_calls: 30,
+					window_seconds: 60,
+				},
+				ToolLimit {
+					tool: "account-login".into(),
+					max_calls: 12,
+					window_seconds: 60,
+				},
+				ToolLimit {
+					tool: "account-login-global".into(),
+					max_calls: 120,
+					window_seconds: 60,
+				},
+				ToolLimit {
+					tool: "account-password".into(),
+					max_calls: 10,
+					window_seconds: 60,
+				},
+				ToolLimit {
+					tool: "account-accept".into(),
+					max_calls: 30,
+					window_seconds: 60,
+				},
+			]),
 			config,
 		}),
 	})
@@ -201,6 +228,7 @@ pub fn router(state: AppState) -> Router {
 	Router::new()
 		.merge(webhooks)
 		.merge(native::routes())
+		.merge(accounts::routes())
 		.route("/", get(native::home))
 		.route("/healthz", get(health))
 		.route("/login", get(login))
@@ -266,7 +294,41 @@ pub fn router(state: AppState) -> Router {
 				.patch(scim_patch_group)
 				.delete(scim_delete_group),
 		)
+		.layer(axum::middleware::from_fn_with_state(
+			state.clone(),
+			browser_security,
+		))
 		.with_state(state)
+}
+
+async fn browser_security(
+	State(state): State<AppState>,
+	request: axum::extract::Request,
+	next: axum::middleware::Next,
+) -> Response {
+	let unsafe_method = !matches!(
+		*request.method(),
+		axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+	);
+	if unsafe_method
+		&& (read_cookie(request.headers(), "magpie_session").is_some()
+			|| request.uri().path() == "/api/auth/break-glass")
+		&& !accounts::same_origin(&state, request.headers())
+	{
+		return (
+			StatusCode::FORBIDDEN,
+			"Cross-origin account and governance changes are refused.",
+		)
+			.into_response();
+	}
+	let mut response = next.run(request).await;
+	response
+		.headers_mut()
+		.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
+	response
+		.headers_mut()
+		.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+	response
 }
 
 async fn health() -> &'static str {
@@ -288,12 +350,16 @@ fn login_error(state: &AppState, error: &str) -> Response {
 	.into_response()
 }
 
-async fn login(State(state): State<AppState>) -> Html<String> {
+async fn login(State(state): State<AppState>) -> Response {
+	if !state.inner.config.gateway_ui_dir.is_empty() {
+		return Redirect::to("/ui/login").into_response();
+	}
 	Html(ui::login_page(
 		state.inner.config.oidc_enabled(),
 		state.inner.config.break_glass.enabled,
 		None,
 	))
+	.into_response()
 }
 
 /// Discovery and signing keys, fetched once and again when a key is unknown.
@@ -405,7 +471,7 @@ async fn auth_callback(
 	};
 	if !state.inner.config.mock_idp {
 		return match oidc_exchange(&state, &headers, code, &pending).await {
-			Ok(claims) => finish_login(&state, &headers, &claims, false),
+			Ok(claims) => finish_login(&state, &headers, &claims, false, None),
 			Err(error) => login_error(&state, &error),
 		};
 	}
@@ -427,7 +493,7 @@ async fn auth_callback(
 			return login_error(&state, &error.to_string());
 		},
 	};
-	finish_login(&state, &headers, &claims, false)
+	finish_login(&state, &headers, &claims, false, None)
 }
 
 #[derive(Deserialize)]
@@ -511,6 +577,7 @@ fn finish_login(
 	headers: &HeaderMap,
 	claims: &IdClaims,
 	break_glass: bool,
+	expected_password_hash: Option<&str>,
 ) -> Response {
 	let mut groups = claims.groups.clone();
 	groups.extend(claims.roles.clone());
@@ -548,6 +615,16 @@ fn finish_login(
 	};
 	{
 		let store = state.inner.store.lock().expect("db");
+		if let Some(expected) = expected_password_hash
+			&& store
+				.local_account(&record.subject)
+				.ok()
+				.flatten()
+				.is_none_or(|a| a.password_hash != expected)
+		{
+			return login_error(state, "Password changed. Please sign in again.");
+		}
+
 		if store.remember_portal_user(&user).is_err() {
 			return login_error(state, "Could not save the signed-in user.");
 		}
@@ -582,7 +659,11 @@ fn finish_login(
 		if break_glass {
 			"break-glass login"
 		} else {
-			"oidc login"
+			if claims.iss == "local" {
+				"local account login"
+			} else {
+				"oidc login"
+			}
 		},
 	);
 	let mut response = Redirect::to(if state.inner.config.gateway_admin_url.is_empty() {
@@ -680,37 +761,7 @@ async fn break_glass_login(
 	headers: HeaderMap,
 	Form(form): Form<GlassForm>,
 ) -> Response {
-	if let Err(error) = verify_break_glass(
-		&state.inner.config.break_glass,
-		&form.username,
-		&form.password,
-	) {
-		let _ = record_audit(
-			&state,
-			"login",
-			&form.username,
-			"",
-			"",
-			"",
-			"block",
-			"break-glass rejected",
-		);
-		return login_error(&state, &error.to_string());
-	}
-	let claims = IdClaims {
-		sub: form.username.clone(),
-		email: Some(format!("{}@local.invalid", form.username)),
-		name: Some("Break-glass".into()),
-		preferred_username: None,
-		groups: vec!["magpie-owners".into()],
-		roles: vec![],
-		nonce: None,
-		iss: "break-glass".into(),
-		aud: json!(&state.inner.config.audience),
-		exp: (Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
-		events: json!({}),
-	};
-	finish_login(&state, &headers, &claims, true)
+	accounts::local_login(state, headers, form).await
 }
 
 async fn saml() -> Response {
@@ -877,6 +928,22 @@ fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: St
 		Ok((session, cookie)) => {
 			if !access::allows(state, &session, access::page_permission(path)) {
 				return (StatusCode::FORBIDDEN, "Your role cannot view this page.").into_response();
+			}
+			if headers.get("x-magpie-view").is_some_and(|v| v == "1") {
+				return (
+					[
+						(header::CACHE_CONTROL, "no-store".to_string()),
+						(
+							header::SET_COOKIE,
+							session_cookie(&cookie, state.inner.config.cookie_secure),
+						),
+					],
+					Json(json!({"title":title,"body":body})),
+				)
+					.into_response();
+			}
+			if !state.inner.config.gateway_ui_dir.is_empty() {
+				return Redirect::to(&format!("/ui/governance{path}")).into_response();
 			}
 			let mut response = Html(ui::layout(
 				title,

@@ -146,7 +146,7 @@ pub struct Document {
 }
 
 pub struct Store {
-	conn: Connection,
+	pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -166,6 +166,7 @@ impl Store {
 
 	pub fn migrate(&self) -> Result<()> {
 		self.conn.execute_batch(SQLITE_SCHEMA)?;
+		self.migrate_accounts()?;
 		Ok(())
 	}
 

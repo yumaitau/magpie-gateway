@@ -11,6 +11,7 @@ import { createRoot } from 'react-dom/client';
 
 import { routerBasePath } from '@/basePath';
 import { Shell } from '@/components/Shell';
+import { isMagpie } from '@/magpie';
 import { CelPage } from '@/pages/Cel';
 import { ClientSetupPage } from '@/pages/ClientSetup';
 import { CostsPage } from '@/pages/Costs';
@@ -21,6 +22,13 @@ import { HomePage } from '@/pages/Home';
 import { KeysPage } from '@/pages/Keys';
 import { LoginPage } from '@/pages/Login';
 import { AnalyticsPage, LogsPage } from '@/pages/Logs';
+import {
+	MagpieAcceptPage,
+	MagpieAccountPage,
+	MagpieLoginPage,
+	MagpiePeoplePage
+} from '@/pages/MagpieAccounts';
+import { MagpieGovernancePage } from '@/pages/MagpieGovernance';
 import { McpPlaygroundPage } from '@/pages/McpPlayground';
 import { McpServersPage } from '@/pages/McpServers';
 import { ModelsPage } from '@/pages/Models';
@@ -38,6 +46,7 @@ import '@fontsource/geist-sans/latin-500.css';
 import '@fontsource/geist-sans/latin-600.css';
 import '@fontsource/geist-sans/latin-700.css';
 import '@/styles.css';
+import '@/styles/magpie.css';
 import '@/styles/analytics.css';
 
 const LazyRawConfigPage = React.lazy(() =>
@@ -52,13 +61,39 @@ const rootRoute = createRootRoute();
 const loginRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: '/login',
-	component: LoginPage
+	component: isMagpie ? MagpieLoginPage : LoginPage
 });
 
 const appRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	id: 'app',
 	component: Shell
+});
+
+const magpieAccountRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/account',
+	component: MagpieAccountPage
+});
+const magpiePeopleRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/people',
+	component: MagpiePeoplePage
+});
+const magpieGovernanceRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/governance/$page',
+	component: MagpieGovernancePage
+});
+const magpieAcceptRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: '/accept-invitation',
+	component: MagpieAcceptPage
+});
+const magpieResetRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: '/reset-password',
+	component: MagpieAcceptPage
 });
 
 const indexRoute = createRoute({
@@ -243,8 +278,13 @@ const router = createRouter({
 	basepath: routerBasePath(),
 	routeTree: rootRoute.addChildren([
 		loginRoute,
+		magpieAcceptRoute,
+		magpieResetRoute,
 		appRoute.addChildren([
 			indexRoute,
+			magpieAccountRoute,
+			magpiePeopleRoute,
+			magpieGovernanceRoute,
 			dumpPoliciesRoute,
 			llmGetStartedRoute,
 			modelsRoute,

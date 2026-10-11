@@ -8,7 +8,7 @@ pub const ACTIONS: &[(Permission, &str, &str)] = &[
 	(
 		Permission::ReadGatewayConfig,
 		"readGatewayConfig",
-		"Open native console and read gateway configuration (includes credentials)",
+		"Read gateway configuration (includes provider credentials)",
 	),
 	(
 		Permission::EditGatewayModels,

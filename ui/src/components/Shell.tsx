@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
 	BarChart3,
@@ -43,6 +44,7 @@ import {
 	useRuntimeInfo,
 	useTrafficConfigData
 } from '@/hooks';
+import { isMagpie, useMagpieSession } from '@/magpie';
 
 type NavItemConfig = {
 	to: string;
@@ -73,17 +75,27 @@ const projectLinks = [
 
 export function Shell() {
 	const router = useRouterState();
-	const runtime = useRuntimeInfo();
-	const mode = useConfigDumpMode();
+	const magpie = useMagpieSession();
+	const canReadGateway = !isMagpie || Boolean(magpie.data?.canReadGateway);
+	const runtime = useRuntimeInfo({ enabled: canReadGateway });
+	const mode = useConfigDumpMode({ enabled: canReadGateway });
+	const queryClient = useQueryClient();
+	useEffect(() => {
+		const refresh = () => {
+			void queryClient.invalidateQueries({ queryKey: ['magpie-session'] });
+		};
+		window.addEventListener('magpie-settings-changed', refresh);
+		return () => window.removeEventListener('magpie-settings-changed', refresh);
+	}, [queryClient]);
 	const dumpMode = mode.data?.mode === 'dump';
 	const config = useEffectiveGatewayConfig({
-		enabled: Boolean(mode.data && mode.data.mode !== 'dump')
+		enabled: canReadGateway && Boolean(mode.data && mode.data.mode !== 'dump')
 	});
 	const mcpData = useMcpConfigData({
-		enabled: Boolean(mode.data && mode.data.mode !== 'dump')
+		enabled: canReadGateway && Boolean(mode.data && mode.data.mode !== 'dump')
 	});
 	const trafficData = useTrafficConfigData({
-		enabled: Boolean(mode.data && mode.data.mode !== 'dump')
+		enabled: canReadGateway && Boolean(mode.data && mode.data.mode !== 'dump')
 	});
 	const [theme, setTheme] = useState(
 		() =>
@@ -105,13 +117,41 @@ export function Shell() {
 				'tcpRoutes' in trafficData.data
 			: true;
 	const hasBinds = dumpMode ? true : config.data ? Boolean(config.data.binds?.length) : false;
-	const navGroups = navigationGroups({
+	const nativeGroups = navigationGroups({
 		hasLlm,
 		hasMcp,
 		hasTraffic,
 		hasBinds,
 		dumpMode
 	});
+	const navGroups: ReadonlyArray<{ title: string; items: readonly NavItemConfig[] }> = isMagpie
+		? [
+				{
+					title: 'Workspace',
+					items: [
+						{ to: '/account', label: 'My account', icon: UserRound },
+						...(magpie.data?.canManagePeople
+							? [{ to: '/people', label: 'People', icon: UserRound }]
+							: [])
+					]
+				},
+				...(canReadGateway ? nativeGroups : []),
+				{
+					title: 'Governance',
+					items: (magpie.data?.links || []).map(item => ({
+						to: `/governance${item.href}`,
+						label:
+							item.href === '/access'
+								? 'Roles and groups'
+								: item.href === '/settings'
+									? 'Enforcement and settings'
+									: item.label,
+						icon: ShieldCheck
+					}))
+				}
+			]
+		: nativeGroups;
+	const currentUser = magpie.data || runtime.data?.user;
 	const nav = navGroups.flatMap(group => group.items);
 	const matchedNav = nav
 		.filter(item => navItemActive(item, router.location.pathname))
@@ -132,7 +172,11 @@ export function Shell() {
 	return (
 		<div className="app-shell">
 			<aside className="sidebar">
-				<Link to="/" className="brand" aria-label="agentgateway home">
+				<Link
+					to={canReadGateway ? '/' : '/account'}
+					className="brand"
+					aria-label="agentgateway home"
+				>
 					<img className="brand-logo brand-logo-light" src={logoLight} alt="agentgateway" />
 					<img className="brand-logo brand-logo-dark" src={logoDark} alt="agentgateway" />
 					{runtime.data?.build.version && (
@@ -204,7 +248,20 @@ export function Shell() {
 						)}
 					</div>
 					<div className="topbar-controls">
-						{runtime.data?.user && <UserMenu user={runtime.data.user} />}
+						{isMagpie &&
+							magpie.data &&
+							(magpie.data.links.some(item => item.href === '/settings') ? (
+								<Link className="magpie-mode" to="/governance/$page" params={{ page: 'settings' }}>
+									{magpie.data.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement'}
+								</Link>
+							) : (
+								<span className="magpie-mode">
+									{magpie.data.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement'}
+								</span>
+							))}
+						{currentUser && (
+							<UserMenu user={currentUser} canManagePeople={magpie.data?.canManagePeople} />
+						)}
 						<Tooltip content="Toggle theme">
 							<button
 								className="icon-button"
@@ -228,11 +285,13 @@ export function Shell() {
 							previous configuration. Fix the configuration and save it to retry.
 						</StatusBanner>
 					)}
-					{runtime.data?.ui.configStoreMode === 'readOnly' && (
-						<StatusBanner state="info" title="Read-only mode">
-							The UI is configured as read-only. Editing is disabled.
-						</StatusBanner>
-					)}
+					{runtime.data?.ui.configStoreMode === 'readOnly' &&
+						!router.location.pathname.includes('/governance/') &&
+						!['/account', '/people'].includes(router.location.pathname) && (
+							<StatusBanner state="info" title="Read-only mode">
+								The UI is configured as read-only. Editing is disabled.
+							</StatusBanner>
+						)}
 					<Outlet />
 				</main>
 			</div>
@@ -240,7 +299,7 @@ export function Shell() {
 	);
 }
 
-function UserMenu({ user }: { user: RuntimeUser }) {
+function UserMenu({ user, canManagePeople }: { user: RuntimeUser; canManagePeople?: boolean }) {
 	const [open, setOpen] = useState(false);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const ref = useDismissiblePopover<HTMLDivElement>(open, () => {
@@ -284,6 +343,16 @@ function UserMenu({ user }: { user: RuntimeUser }) {
 						<strong>{label}</strong>
 						{user.email && user.email !== label && <span>{user.email}</span>}
 					</div>
+					{isMagpie && (
+						<Link className="user-menu-signout" to="/account" onClick={() => setOpen(false)}>
+							My account · Change password
+						</Link>
+					)}
+					{isMagpie && canManagePeople && (
+						<Link className="user-menu-signout" to="/people" onClick={() => setOpen(false)}>
+							Invite colleague
+						</Link>
+					)}
 					{user.canLogout && (
 						<form action={`${apiBase}/api/auth/logout`} method="post">
 							<button className="user-menu-signout" type="submit">

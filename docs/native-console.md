@@ -1,7 +1,9 @@
 # Native Agentgateway console
 
 The public root opens `/ui/` for a signed-in user with `readGatewayConfig`.
-Other signed-in users land on the Magpie dashboard. The console is the upstream
+Other signed-in users land on My account inside the same native console. All governance screens, account management, invitations, roles and groups use this same shell. Old page bookmarks redirect to `/ui/governance/`; the separate legacy navigation is not used in deployed builds. See [Accounts and invitations](accounts.md).
+
+The console is the upstream
 React UI in `ui/`, with Magpie artwork, colours, governance navigation and an
 identity/enforcement indicator. Models, providers, policies, guardrails, virtual
 keys, costs, analytics, logs, client setup, chat, MCP, traffic, CEL, raw

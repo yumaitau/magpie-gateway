@@ -35,7 +35,13 @@ pub async fn home(State(state): State<AppState>, headers: HeaderMap) -> Redirect
 	let native = !state.inner.config.gateway_admin_url.is_empty()
 		&& session_from(&state, &headers)
 			.is_ok_and(|(s, _)| access::allows(&state, &s, Permission::ReadGatewayConfig));
-	Redirect::to(if native { "/ui/" } else { "/dashboard" })
+	Redirect::to(if native {
+		"/ui/"
+	} else if !state.inner.config.gateway_ui_dir.is_empty() {
+		"/ui/account"
+	} else {
+		"/dashboard"
+	})
 }
 
 async fn asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
@@ -79,6 +85,9 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Response 
 		.collect();
 	let mut response = Json(json!({
 			"name": session.name,
+						"subject": session.subject, "email": session.email, "canLogout": true,
+						"canReadGateway": access::allows(&state, &session, Permission::ReadGatewayConfig),
+						"canManagePeople": access::allows(&state, &session, Permission::ManageAccess),
 			"roles": access::role_names(&state, &session),
 			"mode": load_settings(&state).guardrail_mode.as_str(),
 			"canChangeEnforcement": access::allows(&state, &session, Permission::ChangeEnforcement),
@@ -200,6 +209,24 @@ fn changed_actions(before: &Value, after: &Value) -> Vec<Permission> {
 }
 
 async fn proxy(State(state): State<AppState>, request: Request) -> Response {
+	let path = request.uri().path();
+	if request.method() == Method::GET && !state.inner.config.gateway_ui_dir.is_empty() {
+		let public = matches!(
+			path,
+			"/ui/login" | "/ui/accept-invitation" | "/ui/reset-password"
+		) || path.starts_with("/ui/assets/")
+			|| path == "/ui/favicon.svg";
+		if public {
+			return serve_frontend(&state, path, "");
+		}
+		if path == "/ui" || path.starts_with("/ui/") {
+			return match session_from(&state, request.headers()) {
+				Ok((_, cookie)) => serve_frontend(&state, path, &cookie),
+				Err(r) => r,
+			};
+		}
+	}
+
 	let base = state.inner.config.gateway_admin_url.trim_end_matches('/');
 	if base.is_empty() {
 		return StatusCode::NOT_FOUND.into_response();
@@ -467,12 +494,14 @@ fn serve_frontend(state: &AppState, path: &str, cookie: &str) -> Response {
 	response
 		.headers_mut()
 		.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-	response.headers_mut().insert(
-		header::SET_COOKIE,
-		session_cookie(cookie, state.inner.config.cookie_secure)
-			.parse()
-			.unwrap(),
-	);
+	if !cookie.is_empty() {
+		response.headers_mut().insert(
+			header::SET_COOKIE,
+			session_cookie(cookie, state.inner.config.cookie_secure)
+				.parse()
+				.unwrap(),
+		);
+	}
 	response
 }
 

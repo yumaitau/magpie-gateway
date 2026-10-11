@@ -72,9 +72,10 @@ export function useEffectiveGatewayConfig(options?: { enabled?: boolean }) {
 	});
 }
 
-export function useRuntimeInfo() {
+export function useRuntimeInfo(options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: ['runtime'],
+		enabled: options?.enabled ?? true,
 		queryFn: getRuntimeInfo,
 		retry: false
 	});
@@ -186,9 +187,10 @@ export function useBudgetStatus(options?: { enabled?: boolean }) {
 	});
 }
 
-export function useConfigDumpMode() {
+export function useConfigDumpMode(options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: ['config_dump_mode'],
+		enabled: options?.enabled ?? true,
 		queryFn: async () => {
 			try {
 				const runtime = await getRuntimeInfo();

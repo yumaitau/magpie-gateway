@@ -1538,3 +1538,295 @@ async fn australian_dlp_rules_are_permissioned_and_partial_edits_preserve_other_
 		assert!(!preview.contains(raw));
 	}
 }
+
+#[tokio::test]
+async fn local_accounts_invites_password_changes_and_revocation() {
+	let password = "initial-local-password-1234";
+	let base = spawn_with(config(
+		BreakGlassConfig {
+			enabled: true,
+			username: "admin".into(),
+			password_hash: hash_password(password).unwrap(),
+		},
+		false,
+	))
+	.await;
+	let (admin, _) = client(&base);
+	let (anonymous, _) = client(&base);
+	assert_eq!(
+		anonymous
+			.get(format!("{base}/api/magpie/people"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert!(
+		admin
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"admin","password":password}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	let people: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/people"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let viewer_group = people["groups"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|g| g["roles"].as_array().unwrap().iter().any(|r| r == "viewer"))
+		.unwrap()["id"]
+		.as_str()
+		.unwrap();
+	let invitation =
+		json!({"name":"Local Tester","email":"local@example.com.au","groups":[viewer_group]});
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/magpie/invitations"))
+			.header("Origin", "https://untrusted.example")
+			.json(&invitation)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	let result: serde_json::Value = admin
+		.post(format!("{base}/api/magpie/invitations"))
+		.json(&invitation)
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let token = result["link"].as_str().unwrap().split('#').nth(1).unwrap();
+	let links = admin
+		.get(format!("{base}/api/magpie/people"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(!links.contains(token));
+	assert!(!links.contains("password_hash"));
+	let member_password = "my-personal-passphrase-5678";
+	let accept = json!({"token":token,"password":member_password,"confirmPassword":member_password});
+	assert!(
+		anonymous
+			.post(format!("{base}/api/magpie/accept-link"))
+			.json(&accept)
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	assert_eq!(
+		anonymous
+			.post(format!("{base}/api/magpie/accept-link"))
+			.json(&accept)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	let (member, _) = client(&base);
+	assert!(
+		member
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"LOCAL@example.com.au","password":member_password}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	assert!(
+		member
+			.get(format!("{base}/dashboard"))
+			.header("X-Magpie-View", "1")
+			.send()
+			.await
+			.unwrap()
+			.json::<serde_json::Value>()
+			.await
+			.unwrap()["body"]
+			.is_string()
+	);
+	assert_eq!(
+		member
+			.post(format!("{base}/api/magpie/invitations"))
+			.json(&invitation)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		member
+			.get(format!("{base}/api/magpie/people"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	let me: serde_json::Value = member
+		.get(format!("{base}/api/magpie/account"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(me["local"], true);
+	let people: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/people"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let subject = people["users"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|u| u["email"] == "local@example.com.au")
+		.unwrap()["subject"]
+		.as_str()
+		.unwrap();
+	let reset: serde_json::Value = admin
+		.post(format!("{base}/api/magpie/password-reset"))
+		.json(&json!({"subject":subject}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let reset_token = reset["link"].as_str().unwrap().split('#').nth(1).unwrap();
+	let next = "new-personal-passphrase-9999";
+	assert!(
+		anonymous
+			.post(format!("{base}/api/magpie/accept-link"))
+			.json(&json!({"token":reset_token,"password":next,"confirmPassword":next}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	assert_eq!(
+		member
+			.get(format!("{base}/api/magpie/account"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert_eq!(
+		member
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"local@example.com.au","password":member_password}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert!(
+		member
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"local@example.com.au","password":next}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	let new_admin = "updated-admin-passphrase-2026";
+	let change = json!({"currentPassword":"wrong","password":new_admin,"confirmPassword":new_admin});
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/magpie/account/password"))
+			.json(&change)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	assert!(
+		admin
+			.post(format!("{base}/api/magpie/account/password"))
+			.json(&json!({"currentPassword":password,"password":new_admin,"confirmPassword":new_admin}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	assert_eq!(
+		admin
+			.get(format!("{base}/api/magpie/account"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"admin","password":password}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert!(
+		admin
+			.post(format!("{base}/api/magpie/login"))
+			.json(&json!({"username":"admin","password":new_admin}))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	let audit = admin
+		.get(format!("{base}/audit.csv"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	for secret in [
+		password,
+		member_password,
+		next,
+		new_admin,
+		token,
+		reset_token,
+	] {
+		assert!(!audit.contains(secret));
+	}
+}

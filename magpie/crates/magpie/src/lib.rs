@@ -4,6 +4,7 @@
 //! guardrail webhook call it, and the proxy stays configured through its
 //! existing webhook and CEL hooks.
 
+pub mod accounts;
 pub mod approvals;
 pub mod au;
 pub mod audit;

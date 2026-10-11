@@ -18,9 +18,9 @@ const tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 async function signIn(page) {
   await page.goto(`${base}/login`);
-  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Email or username').fill('admin');
   await page.getByLabel('Password').fill(process.env.MAGPIE_ADMIN_PASSWORD);
-  await page.getByRole('button', { name: 'Sign in as administrator' }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page).toHaveURL(/\/ui\/$/);
 }
 
@@ -37,16 +37,18 @@ async function ask(request, content) {
 
 async function setKillAgent(page, value) {
   await page.goto(`${base}/settings`);
-  await page.locator('#kill_agent').fill(value);
+  await page.locator('#magpie-field-kill_agent').fill(value);
   await page.locator('form[action="/settings"] button[type="submit"]').click();
-  await expect(page.locator('#kill_agent')).toHaveValue(value);
+  await expect(page.locator('.magpie-governance')).toHaveAttribute('aria-busy', 'false');
+  await page.reload();
+  await expect(page.locator('#magpie-field-kill_agent')).toHaveValue(value);
 }
 
 test('bare address opens login, then the native console for a signed-in user', async ({ page }) => {
   const response = await page.goto(base);
   expect(response.status()).toBe(200);
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole('button', { name: 'Sign in as administrator' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await signIn(page);
   const signedIn = await page.goto(base);
   expect(signedIn.status()).toBe(200);
@@ -55,16 +57,16 @@ test('bare address opens login, then the native console for a signed-in user', a
 
 test('login page offers the administrator form and passes axe', async ({ page }) => {
   await page.goto(`${base}/login`);
-  await expect(page.getByRole('heading', { name: 'Administrator' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sign in to Magpie Gateway' })).toBeVisible();
   const results = await new AxeBuilder({ page }).withTags(tags).analyze();
   expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
 });
 
 test('a wrong password is refused', async ({ page }) => {
   await page.goto(`${base}/login`);
-  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Email or username').fill('admin');
   await page.getByLabel('Password').fill('not-the-password-at-all');
-  await page.getByRole('button', { name: 'Sign in as administrator' }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page).not.toHaveURL(/\/dashboard$/);
 });
@@ -76,7 +78,9 @@ for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/polic
     expect(response.status()).toBe(200);
     const html = await page.content();
     expect(html).not.toContain('Example data');
-    expect(html).toContain('Break-glass session');
+    await expect(page.locator('.magpie-governance')).not.toBeEmpty();
+    await expect(page.locator('.app-shell')).toHaveCount(1);
+    await expect(page).toHaveURL(new RegExp('/ui/governance'+path+'$'));
     const results = await new AxeBuilder({ page }).withTags(tags).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
   });
@@ -103,8 +107,8 @@ test('a request through the gateway appears in the audit log under its sender', 
 test('the per-agent kill switch respects the deployment mode and is restored after testing', async ({ page, request }) => {
   await signIn(page);
   await page.goto(`${base}/settings`);
-  const previous = await page.locator('#kill_agent').inputValue();
-  const logOnly = await page.locator('#guardrail_mode').inputValue() === 'log-only';
+  const previous = await page.locator('#magpie-field-kill_agent').inputValue();
+  const logOnly = await page.locator('#magpie-field-guardrail_mode').inputValue() === 'log-only';
   await setKillAgent(page, [previous, person].filter(Boolean).join(', '));
   try {
     const blocked = await ask(request, 'Reply with the word ready.');

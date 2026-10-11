@@ -116,6 +116,42 @@ jobs:
           fi
           npm test --prefix magpie/axe
 
+  native-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+      - name: Build native UI and portal
+        run: |
+          npm install -g pnpm@11.20.0
+          pnpm --dir ui install --frozen-lockfile
+          VITE_MAGPIE=true pnpm --dir ui build
+          cargo build --manifest-path magpie/Cargo.toml -p magpie-portal
+          npm ci --prefix magpie/axe
+          cd magpie/axe && npx playwright install --with-deps chromium
+      - name: Native accounts and governance
+        run: |
+          node magpie/axe/native/mock-gateway.js > /tmp/mock-gateway.log 2>&1 &
+          MAGPIE_ADMIN_PASSWORD=local-preview-passphrase-12345 \
+            MAGPIE_SESSION_SECRET=local-preview-session-secret-1234567890 \
+            MAGPIE_HMAC_SECRET=local-preview-hmac-secret-1234567890 \
+            MAGPIE_DATABASE_URL=:memory: MAGPIE_COOKIE_SECURE=0 \
+            MAGPIE_LISTEN=127.0.0.1:18188 MAGPIE_PUBLIC_URL=http://127.0.0.1:18188 \
+            MAGPIE_GATEWAY_ADMIN_URL=http://127.0.0.1:18190 \
+            MAGPIE_GATEWAY_UI_DIR="$PWD/ui/dist" \
+            ./magpie/target/debug/magpie-portal > /tmp/native-portal.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18188/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          MAGPIE_NATIVE_URL=http://127.0.0.1:18188 \
+            npx --prefix magpie/axe playwright test --config=magpie/axe/playwright.config.js native/accounts.spec.js
+
   image:
     runs-on: ubuntu-latest
     permissions:

@@ -34,3 +34,7 @@ overlays; the operational mode indicator remains separate from artwork.
 ## Motion
 
 Only short colour, border and background transitions for interaction feedback. Respect reduced motion. No decorative page-load animation.
+
+## Account and governance navigation
+
+Workspace places My account and People first. The account menu repeats password and invitation entry points. All governance content uses the native shell, theme tokens, button and form styles. Public sign-in and invitation acceptance share those tokens and the supplied banner. Restricted users retain account access without receiving gateway configuration permissions.

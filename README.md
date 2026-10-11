@@ -7,7 +7,7 @@
 Australian AI governance built on Agentgateway, with configurable privacy controls,
 role-based access, audit trails and log-only trials before enforcement.
 
-[Deployment guide](docs/engagement.md) · [Australian privacy](docs/australian-privacy.md) · [Native console](docs/native-console.md)
+[Accounts and invitations](docs/accounts.md) · [Deployment guide](docs/engagement.md) · [Australian privacy](docs/australian-privacy.md) · [Native console](docs/native-console.md)
 
 > **Fork notice.** This private repository (`yumaitau/magpie-gateway`) is Yuma IT's working copy of [agentgateway](https://github.com/agentgateway/agentgateway) (`main` at `85d1f087`, Apache-2.0). Upstream history is preserved so later syncs can merge `upstream/main`. Product work for Australian clients lives on later branches. To stand it up for a client, see [docs/engagement.md](docs/engagement.md) and `./magpie.sh`. agentgateway and Linux Foundation names and marks remain those of their owners. The text below is the upstream README, preserved below the Magpie introduction.
 

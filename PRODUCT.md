@@ -33,3 +33,5 @@ The previous beige-and-green generic admin interface, anonymous dashboard cards,
 Maintain the existing axe checks for WCAG 2 A/AA, 2.1 A/AA and 2.2 AA. Preserve keyboard navigation, visible focus, skip links, semantic headings, labelled forms, reduced-motion support and responsive access to tables.
 
 The user explicitly requires all features and the appearance of the built-in Agentgateway UI. Serve the version-matched native console, integrate Magpie governance, protect management APIs with per-action RBAC, and persist UI edits across deployments.
+
+The product has one native UI. Account security, colleague invitations, custom roles, groups and every governance screen belong in that interface; do not link users into a separate legacy portal shell.
