@@ -131,7 +131,8 @@ test('audit CSV export downloads for the administrator', async ({ page }) => {
 
 test('log out ends the session', async ({ page }) => {
   await signIn(page);
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: /^Account:/ }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   const response = await page.goto(`${base}/dashboard`);
   await expect(page).toHaveURL(/\/login$/);
   expect(response.status()).toBe(200);
