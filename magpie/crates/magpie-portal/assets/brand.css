@@ -42,3 +42,4 @@
   .magpie-mode { font-size: 11px; padding: 5px 8px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+:root[data-theme='dark'] .primary { color: oklch(20% .008 220); }

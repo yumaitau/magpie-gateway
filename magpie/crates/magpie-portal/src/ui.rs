@@ -63,6 +63,11 @@ pub const NAV: &[Nav] = &[
 ];
 
 pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body: &str) -> String {
+	let console = if viewer.is_some_and(|v| v.permissions.contains(&Permission::ReadGatewayConfig)) {
+		r#"<a class="console-link" href="/ui/">← Gateway console</a>"#
+	} else {
+		""
+	};
 	let nav = NAV
 		.iter()
 		.filter(|item| {
@@ -125,7 +130,7 @@ pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body
 <aside>
 <p class="mark"><img src="/assets/magpie/mark.svg" width="38" height="38" alt=""> <span>Magpie<small>GATEWAY</small></span></p>
 <p class="muted small">Yuma IT</p>
-<a class="console-link" href="/ui/">← Gateway console</a><nav aria-label="Primary">{nav}</nav>
+{console}<nav aria-label="Primary">{nav}</nav>
 </aside>
 <div class="main">
 <header>

@@ -204,3 +204,14 @@ test('client setup uses the public origin and native UI works on a phone', async
   await expect(page.getByRole('heading', { name: 'Gateway Overview', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+
+test('native home keeps accessible contrast in light and dark themes', async ({ page }) => {
+  await signIn(page);
+  await expect(page.getByRole('heading', { name: 'Gateway Overview', exact: true })).toBeVisible();
+  for (let i = 0; i < 2; i++) {
+    const result = await new AxeBuilder({ page }).withTags(tags).analyze();
+    expect(result.violations, JSON.stringify(result.violations, null, 2)).toEqual([]);
+    await page.getByRole('button', { name: 'Toggle theme', exact: true }).click();
+  }
+});
