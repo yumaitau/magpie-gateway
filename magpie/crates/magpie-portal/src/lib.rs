@@ -514,22 +514,31 @@ fn finish_login(
 		last_login: now.to_rfc3339(),
 		disabled: false,
 	};
-	if state
-		.inner
-		.store
-		.lock()
-		.expect("db")
-		.remember_portal_user(&user)
-		.is_err()
 	{
-		return login_error(state, "Could not save the signed-in user.");
+		let store = state.inner.store.lock().expect("db");
+		if store.remember_portal_user(&user).is_err() {
+			return login_error(state, "Could not save the signed-in user.");
+		}
+		if !break_glass
+			&& !matches!(store.portal_user(&record.subject), Ok(Some(ref user)) if !user.disabled)
+		{
+			return login_error(
+				state,
+				"Your portal account is disabled. Contact an access administrator.",
+			);
+		}
+		if store
+			.put_session(
+				&record.session_id,
+				&record.subject,
+				&serde_json::to_string(&record).unwrap_or_default(),
+				&record.absolute_expiry.to_rfc3339(),
+			)
+			.is_err()
+		{
+			return login_error(state, "Could not create the session.");
+		}
 	}
-	let _ = state.inner.store.lock().expect("db").put_session(
-		&record.session_id,
-		&record.subject,
-		&serde_json::to_string(&record).unwrap_or_default(),
-		&record.absolute_expiry.to_rfc3339(),
-	);
 	let _ = record_audit(
 		state,
 		"login",
@@ -776,21 +785,12 @@ fn session_from(
 		.codec
 		.open(&cookie, Utc::now())
 		.map_err(|_| Redirect::to("/login").into_response())?;
-	let stored = state
-		.inner
-		.store
-		.lock()
-		.expect("db")
-		.get_session(&opened.session_id)
-		.ok()
-		.flatten();
+	// Keep validation and renewal under one lock so disabling a user cannot
+	// race with renewal and recreate a revoked session.
+	let store = state.inner.store.lock().expect("db");
+	let stored = store.get_session(&opened.session_id).ok().flatten();
 	if !opened.break_glass {
-		let user = state
-			.inner
-			.store
-			.lock()
-			.expect("db")
-			.portal_user(&opened.subject);
+		let user = store.portal_user(&opened.subject);
 		if !matches!(user, Ok(Some(ref user)) if !user.disabled) {
 			return Err(
 				(
@@ -809,7 +809,7 @@ fn session_from(
 		.codec
 		.touch(opened, Utc::now())
 		.map_err(|_| Redirect::to("/login").into_response())?;
-	let _ = state.inner.store.lock().expect("db").put_session(
+	let _ = store.put_session(
 		&touched.session_id,
 		&touched.subject,
 		&serde_json::to_string(&touched).unwrap_or_default(),

@@ -72,7 +72,7 @@ fn client(base: &str) -> (Client, Arc<Jar>) {
 	(client, jar)
 }
 
-async fn login(client: &Client, base: &str, who: &str) -> HeaderMap {
+async fn login_response(client: &Client, base: &str, who: &str) -> reqwest::Response {
 	let start = client
 		.get(format!("{base}/api/auth/start"))
 		.send()
@@ -110,11 +110,15 @@ async fn login(client: &Client, base: &str, who: &str) -> HeaderMap {
 		.to_str()
 		.expect("utf8")
 		.to_string();
-	let done = client
+	client
 		.get(absolute(base, &callback))
 		.send()
 		.await
-		.expect("callback");
+		.expect("callback")
+}
+
+async fn login(client: &Client, base: &str, who: &str) -> HeaderMap {
+	let done = login_response(client, base, who).await;
 	assert!(done.status().is_redirection(), "{}", done.status());
 	assert!(
 		done
@@ -1162,6 +1166,16 @@ async fn custom_group_roles_grant_individual_actions_and_revoke_active_sessions(
 			.unwrap()
 			.status(),
 		StatusCode::FORBIDDEN
+	);
+	let denied_login = login_response(&user, &base, "alex").await;
+	assert_eq!(denied_login.status(), StatusCode::OK);
+	assert!(denied_login.headers().get(SET_COOKIE).is_none());
+	assert!(
+		denied_login
+			.text()
+			.await
+			.unwrap()
+			.contains("portal account is disabled")
 	);
 	admin
 		.post(format!("{base}/access/users"))
