@@ -19,3 +19,17 @@ export function useModelCatalog() {
 		retry: false
 	});
 }
+
+// Search display names and IDs alike: “Opus 5.5” also finds “claude-opus-5-5”.
+export function matchesModelSearch(value: string, query: string) {
+	const normalize = (text: string) =>
+		text
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, ' ')
+			.trim();
+	const haystack = normalize(value);
+	return query
+		.trim()
+		.split(/\s+/)
+		.every(token => haystack.includes(normalize(token)));
+}

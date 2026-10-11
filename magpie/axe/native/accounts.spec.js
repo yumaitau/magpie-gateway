@@ -171,6 +171,7 @@ test('DLP tuning compares an exact exception without saving the sample',async({p
 test('synced models follow provider endpoints and remain manually selectable', async ({page}) => {
  await login(page);
  const config={llm:{models:[
+  {name:'anthropic/claude-opus-5-5',provider:'anthropic',params:{model:'claude-opus-5-5'}},
   {name:'anthropic/*',provider:'anthropic'},
   {name:'codex/*',provider:'openai'},
   {name:'grok/*',provider:{reference:'grok'},params:{}},
@@ -181,12 +182,37 @@ test('synced models follow provider endpoints and remain manually selectable', a
  await page.route('**/api/config/effective',r=>r.fulfill({json:config}));
  const catalog={syncedAt:'2026-10-12T00:00:00Z',intervalSeconds:3600,canSync:true,error:null,providers:[
   {provider:'anthropic',name:'Anthropic',models:['claude-opus-5-5']},
-  {provider:'openai',name:'OpenAI',models:['codex-new-fixture']},
+  {provider:'openai',name:'OpenAI',models:['codex-new-fixture','gpt-6.1-sol']},
   {provider:'xai',name:'xAI',models:['grok-new-fixture']},
   {provider:'opencode',name:'OpenCode',models:['zen-new-fixture']}
  ]};
  await page.route('**/api/magpie/model-catalog',r=>r.fulfill({json:catalog}));
  await page.goto(`${base}/ui/llm/models`);
+ await expect(page.getByRole('button',{name:'All catalog models',exact:true})).toHaveAttribute('aria-pressed','true');
+ const browse=page.getByRole('region',{name:'Browse model catalog',exact:true});
+ await page.getByLabel('Search all models',{exact:true}).fill('Opus 5.5');
+ await expect(browse.getByRole('cell',{name:'claude-opus-5-5',exact:true})).toBeVisible();
+ await browse.getByRole('button',{name:'Configure claude-opus-5-5 via Anthropic',exact:true}).click();
+ const drawer=page.getByRole('dialog',{name:'Add model',exact:true});
+ await drawer.getByText('Model routing',{exact:false}).first().click();
+ await expect(drawer.getByLabel('Incoming model match',{exact:false})).toHaveValue('anthropic/claude-opus-5-5-2');
+ await expect(drawer.getByLabel('Explicit outgoing model',{exact:true})).toHaveValue('claude-opus-5-5');
+ await drawer.getByRole('button',{name:'Close',exact:true}).click();
+ await page.getByLabel('Search all models',{exact:true}).fill('Codex');
+ await expect(browse.getByRole('cell',{name:'gpt-6.1-sol',exact:true})).toBeVisible();
+ await page.getByLabel('Search all models',{exact:true}).fill('');
+ await browse.getByLabel('Catalog provider',{exact:true}).selectOption('opencode');
+ await expect(browse.getByRole('cell',{name:'zen-new-fixture',exact:true})).toBeVisible();
+ await expect(browse.getByRole('cell',{name:'claude-opus-5-5',exact:true})).toHaveCount(0);
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.setViewportSize({width:1440,height:900});
+ await page.getByRole('button',{name:'Configured routes (6)',exact:true}).click();
+ await expect(page.getByRole('cell',{name:'anthropic/*',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'All catalog models',exact:true}).click();
  await page.getByText('Model catalog · Auto-sync hourly',{exact:true}).click();
  await expect(page.getByText(/Last successful sync:/)).toBeVisible();
  await page.getByRole('button',{name:'Sync now',exact:true}).click();

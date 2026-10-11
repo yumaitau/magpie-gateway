@@ -6447,3 +6447,7 @@ details summary {
 .catalog-model-selector select {
 	max-width: 100%;
 }
+
+.catalog-model-id {
+	overflow-wrap: anywhere;
+}

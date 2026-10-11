@@ -63,7 +63,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Select or type a model',
-				body: 'In Add model, expand Model routing and choose Explicit under Outgoing model to search current suggestions. Existing wildcard routes can choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
+				body: 'Open Models → All catalog models to browse every provider, even those not yet connected. Search by name, such as Opus 5.5 or Codex, and press Configure to start a draft. Configured routes shows only routes already added to your gateway. Existing wildcard routes can choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
 			},
 			{
 				title: 'Verify access and connect',

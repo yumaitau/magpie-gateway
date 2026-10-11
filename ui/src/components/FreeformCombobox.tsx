@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDismissiblePopover } from '@/components/Primitives';
+import { matchesModelSearch } from '@/modelCatalog';
 
 export function FreeformCombobox(props: {
 	ariaLabel: string;
@@ -22,7 +23,7 @@ export function FreeformCombobox(props: {
 	const filteredOptions = useMemo(() => {
 		const query = browseAll ? '' : props.value.trim().toLowerCase();
 		return query
-			? props.options.filter(option => option.toLowerCase().includes(query))
+			? props.options.filter(option => matchesModelSearch(option, query))
 			: props.options;
 	}, [browseAll, props.options, props.value]);
 

@@ -6,7 +6,13 @@ by [OpenCode](https://opencode.ai/v2/docs/models). No provider credentials or
 local coding-tool sessions are sent to this source. New entries become searchable
 in outgoing model, wildcard model, playground and client setup selectors.
 
-Open **Models → Model catalog** to see freshness and errors. Users with **Edit
+Open **Models → All catalog models** to search every synced provider, including
+providers you have not connected yet. Search accepts names such as “Opus 5.5”
+and “Codex”. Use **Configure** to start a model draft, or **Configured routes**
+to view existing routes. Drafts reuse matching shared provider connections and
+choose an unused gateway name; nothing is activated until you save.
+
+Expand **Model catalog** to see freshness and errors. Users with **Edit
 gateway settings** and **Read gateway configuration** can use **Sync now**.
 Concurrent syncs are coalesced, with at most one source request per minute.
 Automatic failures retry after five minutes. Responses have a 30-second deadline

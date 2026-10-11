@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
 import { ConfigDiffSaveActions } from '@/components/ConfigDiffDrawer';
 import { MiniMonacoEditor } from '@/components/MiniMonacoEditor';
+import { ModelCatalogBrowser } from '@/components/ModelCatalogBrowser';
 import { ModelCatalogStatus } from '@/components/ModelCatalogStatus';
 import {
 	ConfirmDialog,
@@ -57,6 +58,7 @@ import {
 	useLlmConfigData,
 	useUpsertConfigResource
 } from '@/hooks';
+import { isMagpie } from '@/magpie';
 import {
 	concreteModelName,
 	isWildcardModelName,
@@ -141,6 +143,7 @@ export function ModelsPage() {
 }
 
 function ModelsEditorPage() {
+	const [inventory, setInventory] = useState(isMagpie ? 'catalog' : 'configured');
 	const { config, hybrid, resources, models, virtualModels, providers, isLoading, error } =
 		useLlmConfigData();
 	const upsertResource = useUpsertConfigResource();
@@ -282,6 +285,7 @@ function ModelsEditorPage() {
 			{
 				onSuccess: () => {
 					closeModelEditor();
+					setInventory('configured');
 					markSetupStep('testedModel', '');
 					markSetupStep('connectedModel', '');
 					setSavedModel(model.name);
@@ -306,6 +310,7 @@ function ModelsEditorPage() {
 			{
 				onSuccess: () => {
 					closeVirtualModelEditor();
+					setInventory('configured');
 					markSetupStep('testedModel', '');
 					markSetupStep('connectedModel', '');
 					setSavedModel(model.name);
@@ -344,6 +349,40 @@ function ModelsEditorPage() {
 			/>
 
 			<ModelCatalogStatus />
+			{isMagpie ? (
+				<nav className="button-row" aria-label="Model inventory">
+					<button
+						type="button"
+						className={inventory === 'catalog' ? 'button primary' : 'button'}
+						aria-pressed={inventory === 'catalog'}
+						onClick={() => setInventory('catalog')}
+					>
+						All catalog models
+					</button>
+					<button
+						type="button"
+						className={inventory === 'configured' ? 'button primary' : 'button'}
+						aria-pressed={inventory === 'configured'}
+						onClick={() => setInventory('configured')}
+					>
+						Configured routes ({modelRows.length})
+					</button>
+				</nav>
+			) : null}
+			{inventory === 'catalog' ? (
+				<ModelCatalogBrowser
+					configuredNames={modelRows.map(row => row.model.name)}
+					configureUnavailableReason={isLoading ? 'Loading gateway configuration…' : error?.message}
+					providers={providers}
+					onConfigure={model => {
+						resetSaves();
+						clearModelSearch();
+						setModelHashState(null);
+						setModelHash(null, 'replace');
+						setEditing({ model });
+					}}
+				/>
+			) : null}
 
 			{saveError ? (
 				<StatusBanner state="bad" title="Save failed">
@@ -368,54 +407,132 @@ function ModelsEditorPage() {
 				</StatusBanner>
 			) : null}
 
-			<Panel>
-				{isLoading ? (
-					<StatusBanner state="loading" title="Loading models" />
-				) : error ? (
-					<StatusBanner state="bad" title="Configuration API unavailable">
-						{error.message}
-					</StatusBanner>
-				) : modelRows.length === 0 ? (
-					<EmptyState
-						title="No models configured"
-						description="Create the first model to make LLM traffic available through the gateway."
-						action={
-							<div className="button-row">
-								<button className="button primary" type="button" onClick={openNewModel}>
-									<Plus size={16} />
-									Add model
-								</button>
-								<button className="button" type="button" onClick={openNewVirtualModel}>
-									<GitBranch size={16} />
-									Add virtual model
-								</button>
-							</div>
-						}
-					/>
-				) : (
-					<div className="table-wrap">
-						<table>
-							<thead>
-								<tr>
-									<th>Name</th>
-									{hybrid ? <th>Source</th> : null}
-									<th>Provider</th>
-									<th>Outgoing model</th>
-									<th>Policy state</th>
-									<th />
-								</tr>
-							</thead>
-							<tbody>
-								{modelRows.map(row => {
-									if (row.kind === 'virtual') {
+			{inventory === 'configured' ? (
+				<Panel>
+					{isLoading ? (
+						<StatusBanner state="loading" title="Loading models" />
+					) : error ? (
+						<StatusBanner state="bad" title="Configuration API unavailable">
+							{error.message}
+						</StatusBanner>
+					) : modelRows.length === 0 ? (
+						<EmptyState
+							title="No models configured"
+							description="Create the first model to make LLM traffic available through the gateway."
+							action={
+								<div className="button-row">
+									<button className="button primary" type="button" onClick={openNewModel}>
+										<Plus size={16} />
+										Add model
+									</button>
+									<button className="button" type="button" onClick={openNewVirtualModel}>
+										<GitBranch size={16} />
+										Add virtual model
+									</button>
+								</div>
+							}
+						/>
+					) : (
+						<div className="table-wrap">
+							<table>
+								<thead>
+									<tr>
+										<th>Name</th>
+										{hybrid ? <th>Source</th> : null}
+										<th>Provider</th>
+										<th>Outgoing model</th>
+										<th>Policy state</th>
+										<th />
+									</tr>
+								</thead>
+								<tbody>
+									{modelRows.map(row => {
+										if (row.kind === 'virtual') {
+											const model = row.model;
+											const databaseBacked = isDatabaseConfigResource(
+												resources,
+												'llm.virtualModel',
+												model.name
+											);
+											return (
+												<tr key={`virtual:${model.name}`}>
+													<td className="strong">{model.name}</td>
+													{hybrid ? (
+														<td>
+															<span className="badge">{databaseBacked ? 'Database' : 'File'}</span>
+														</td>
+													) : null}
+													<td>
+														<span className="badge">
+															<GitBranch size={14} /> Virtual
+														</span>
+													</td>
+													<td>{virtualModelSummary(model)}</td>
+													<td>
+														<span className="badge ok">{virtualModelStrategy(model)}</span>
+													</td>
+													<td className="row-actions">
+														<Tooltip content="Open in playground">
+															<Link
+																className="icon-button"
+																aria-label="Open in playground"
+																to="/llm/playground"
+																search={{ model: model.name }}
+															>
+																<Play size={16} />
+															</Link>
+														</Tooltip>
+														<Tooltip content="Edit model">
+															<button
+																className="icon-button"
+																aria-label="Edit model"
+																type="button"
+																onClick={() =>
+																	setEditingVirtual({
+																		previousName: model.name,
+																		model: structuredClone(model)
+																	})
+																}
+															>
+																<Pencil size={16} />
+															</button>
+														</Tooltip>
+														<Tooltip
+															content={
+																hybrid && !databaseBacked
+																	? 'File-owned models cannot be deleted here'
+																	: 'Delete model'
+															}
+														>
+															<button
+																className="icon-button danger"
+																aria-label="Delete model"
+																type="button"
+																disabled={saving || (hybrid && !databaseBacked)}
+																onClick={() =>
+																	setDeleting({
+																		kind: 'virtual model',
+																		id: model.name,
+																		name: model.name
+																	})
+																}
+															>
+																<Trash2 size={16} />
+															</button>
+														</Tooltip>
+													</td>
+												</tr>
+											);
+										}
 										const model = row.model;
+										const warnings = modelWarnings(model);
 										const databaseBacked = isDatabaseConfigResource(
 											resources,
-											'llm.virtualModel',
-											model.name
+											'llm.model',
+											modelIdentity(model)
 										);
 										return (
-											<tr key={`virtual:${model.name}`}>
+											<tr key={`model:${modelIdentity(model)}`}>
 												<td className="strong">{model.name}</td>
 												{hybrid ? (
 													<td>
@@ -423,13 +540,11 @@ function ModelsEditorPage() {
 													</td>
 												) : null}
 												<td>
-													<span className="badge">
-														<GitBranch size={14} /> Virtual
-													</span>
+													<ModelProviderBadge model={model} providers={providers} />
 												</td>
-												<td>{virtualModelSummary(model)}</td>
+												<td>{model.params?.model || 'Incoming model'}</td>
 												<td>
-													<span className="badge ok">{virtualModelStrategy(model)}</span>
+													<ModelPolicyState model={model} warnings={warnings.length} />
 												</td>
 												<td className="row-actions">
 													<Tooltip content="Open in playground">
@@ -447,12 +562,7 @@ function ModelsEditorPage() {
 															className="icon-button"
 															aria-label="Edit model"
 															type="button"
-															onClick={() =>
-																setEditingVirtual({
-																	previousName: model.name,
-																	model: structuredClone(model)
-																})
-															}
+															onClick={() => openModelEditor(model)}
 														>
 															<Pencil size={16} />
 														</button>
@@ -471,8 +581,8 @@ function ModelsEditorPage() {
 															disabled={saving || (hybrid && !databaseBacked)}
 															onClick={() =>
 																setDeleting({
-																	kind: 'virtual model',
-																	id: model.name,
+																	kind: 'model',
+																	id: modelIdentity(model),
 																	name: model.name
 																})
 															}
@@ -483,82 +593,13 @@ function ModelsEditorPage() {
 												</td>
 											</tr>
 										);
-									}
-									const model = row.model;
-									const warnings = modelWarnings(model);
-									const databaseBacked = isDatabaseConfigResource(
-										resources,
-										'llm.model',
-										modelIdentity(model)
-									);
-									return (
-										<tr key={`model:${modelIdentity(model)}`}>
-											<td className="strong">{model.name}</td>
-											{hybrid ? (
-												<td>
-													<span className="badge">{databaseBacked ? 'Database' : 'File'}</span>
-												</td>
-											) : null}
-											<td>
-												<ModelProviderBadge model={model} providers={providers} />
-											</td>
-											<td>{model.params?.model || 'Incoming model'}</td>
-											<td>
-												<ModelPolicyState model={model} warnings={warnings.length} />
-											</td>
-											<td className="row-actions">
-												<Tooltip content="Open in playground">
-													<Link
-														className="icon-button"
-														aria-label="Open in playground"
-														to="/llm/playground"
-														search={{ model: model.name }}
-													>
-														<Play size={16} />
-													</Link>
-												</Tooltip>
-												<Tooltip content="Edit model">
-													<button
-														className="icon-button"
-														aria-label="Edit model"
-														type="button"
-														onClick={() => openModelEditor(model)}
-													>
-														<Pencil size={16} />
-													</button>
-												</Tooltip>
-												<Tooltip
-													content={
-														hybrid && !databaseBacked
-															? 'File-owned models cannot be deleted here'
-															: 'Delete model'
-													}
-												>
-													<button
-														className="icon-button danger"
-														aria-label="Delete model"
-														type="button"
-														disabled={saving || (hybrid && !databaseBacked)}
-														onClick={() =>
-															setDeleting({
-																kind: 'model',
-																id: modelIdentity(model),
-																name: model.name
-															})
-														}
-													>
-														<Trash2 size={16} />
-													</button>
-												</Tooltip>
-											</td>
-										</tr>
-									);
-								})}
-							</tbody>
-						</table>
-					</div>
-				)}
-			</Panel>
+									})}
+								</tbody>
+							</table>
+						</div>
+					)}
+				</Panel>
+			) : null}
 
 			{activeEditing ? (
 				<ModelEditor
@@ -765,6 +806,12 @@ function ModelEditor(props: {
 				/>
 			)}
 		>
+			{!props.previousId && props.initial.params?.model ? (
+				<p>
+					Selected model: <strong>{props.initial.params.model}</strong>. Choose or review the
+					provider connection below, then save the model.
+				</p>
+			) : null}
 			<details className="schema-details model-help-details">
 				<summary>Help</summary>
 				<div className="model-help-copy">
