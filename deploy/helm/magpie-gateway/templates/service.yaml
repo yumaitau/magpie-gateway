@@ -2,6 +2,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-portal
+  {{- if .Values.ingress.enabled }}
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/success-codes: "200"
+  {{- end }}
   labels:
     {{- include "magpie.labels" . | nindent 4 }}
 spec:
@@ -17,6 +22,12 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ .Release.Name }}-proxy
+  {{- if .Values.ingress.enabled }}
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz/ready
+    alb.ingress.kubernetes.io/healthcheck-port: "15021"
+    alb.ingress.kubernetes.io/success-codes: "200"
+  {{- end }}
   labels:
     {{- include "magpie.labels" . | nindent 4 }}
 spec:

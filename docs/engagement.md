@@ -75,7 +75,7 @@ guardrail webhook on localhost with a shared token, so that route is
 never on the network. The portal database is SQLite on an encrypted gp3
 volume, so the pod runs one replica and is replaced, not rolled.
 
-Terraform owns the front door: an internal load balancer in the
+By default, Terraform owns the front door: an internal load balancer in the
 cluster's private subnets, and CloudFront through a VPC origin for the
 HTTPS address, so no domain or certificate is needed. The pod joins the
 load balancer's target groups through `TargetGroupBinding`, which also
@@ -88,6 +88,56 @@ may invoke only `au.*` inference profiles and the foundation models in
 Sydney and Melbourne they route to. Secrets are Kubernetes Secrets, set
 by Terraform from `engagements/<client>/secrets.env` and kept out of
 plan output.
+
+## Shared EKS ingress
+
+For a cluster with an existing shared ALB, set these in `magpie.conf`:
+
+```bash
+INGRESS_HOST=magpie.yumait.au
+INGRESS_CLASS=alb-shared
+INGRESS_CERTIFICATE_ARN=arn:aws:acm:ap-southeast-2:ACCOUNT:certificate/ID
+DEDICATED_EDGE_ENABLED=false
+```
+
+The IngressClass must join the cluster's shared IngressGroup (on EKS Auto
+Mode, `IngressClassParams.spec.group.name`). The chart adds only HTTPS
+routes for this hostname. It does not own the shared ALB, its network
+allow list, HTTP redirects, or other applications. Keep those settings
+with the cluster owner. Point DNS at the shared ALB and use an issued ACM
+certificate covering the hostname. If the ALB only accepts Cloudflare
+traffic, the DNS record must be proxied and Cloudflare must use HTTPS to
+the origin (Full strict). Bypass caching for the gateway hostname. Apply
+an HTTP-to-HTTPS redirect scoped to that hostname. Disable Cloudflare's
+Browser Integrity Check only on `/v1` and `/v1/*`, since standard API SDK
+headers can otherwise receive error 1010. API keys remain mandatory.
+Use hostname-specific rules so other hosted apps keep their configuration.
+
+`/v1` routes to agentgateway, `/` to the portal, and `/guardrails` and
+`/mcp/check` return 404 at the ALB. Health checks use `/healthz` on 8088
+for the portal and `/healthz/ready` on 15021 for the proxy. Streamed
+responses use the shared ALB and edge provider's existing timeouts.
+
+Optional ALB annotations can be supplied as a JSON object in an engagement
+file named by `INGRESS_ANNOTATIONS_FILE`. Avoid changing shared listener,
+network, or load balancer settings through an application's annotations.
+
+When migrating, initially keep `DEDICATED_EDGE_ENABLED=true`, apply,
+and test the new hostname with `check` and `uitest`. Then switch it to
+`false` and apply again to remove Magpie's dedicated CloudFront, VPC
+origin, ALB, and target groups. Existing standalone deployments retain
+their resource identities. Update any Entra redirect URI to
+`https://HOST/api/auth/callback`, and regenerate client configuration
+with `connect`/`use` before retiring the old endpoint.
+
+The Terraform module can also create the ACM certificate when
+`INGRESS_CERTIFICATE_ARN` is empty. Create the certificate first with a
+targeted apply of `module.magpie.aws_acm_certificate.ingress`, publish
+the DNS-only CNAMEs from the `ingress_certificate_validation` output,
+then apply the full deployment. When migrating an older state, Terraform
+may require including the moved dedicated-edge resources in that initial
+plan. Certificate validation blocks the Helm update until ACM issues it.
+Keep the validation CNAMEs for automatic renewal.
 
 ## Models and residency
 

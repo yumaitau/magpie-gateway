@@ -76,14 +76,18 @@ helm upgrade --install magpie deploy/helm/magpie-gateway -n magpie --create-name
 
 The chart refuses an empty `MAGPIE_SESSION_SECRET` and the old defaults
 `change-me`, `dev-only-change-me` and `magpie-example-key`, and it fails
-without an admin password or an OIDC client ID. It does not create an
-ingress or a certificate. Set `targetGroupBinding.*` to register the pod
-with load balancer target groups you own, as the Terraform does.
+without an admin password or an OIDC client ID. Set `ingress.enabled`,
+`ingress.host`, `ingress.className`, and `ingress.certificateArn` to use an
+existing shared ALB ingress. DNS and ACM certificates are managed outside
+the chart. Alternatively, set `targetGroupBinding.*` to register the pod
+with dedicated target groups, as the default Terraform deployment does.
 
 ## Cloud examples
 
 `terraform/aws` is the stack `./magpie.sh up` deploys: an EKS Auto Mode
 cluster (or an existing cluster), the Helm chart, an internal load
-balancer and a CloudFront address in `ap-southeast-2`. See
+balancer and a CloudFront address in `ap-southeast-2`. Set `shared_ingress`
+and disable `dedicated_edge_enabled` to reuse a cluster's shared ALB with
+your own hostname and no dedicated CloudFront or ALB. See
 `docs/engagement.md`. `terraform/azure` is still a portal-only
 Container App example in `australiaeast`.

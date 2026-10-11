@@ -24,12 +24,19 @@ resource "helm_release" "magpie" {
       kmsKeyId = local.auto_mode ? (var.ebs_kms_key_arn != "" ? var.ebs_kms_key_arn : data.aws_kms_key.ebs[0].arn) : ""
     }
     persistence = { storageClassName = var.existing_cluster_storage_class }
+    ingress = {
+      enabled        = var.shared_ingress.enabled
+      host           = var.shared_ingress.host
+      className      = var.shared_ingress.class_name
+      certificateArn = var.shared_ingress.enabled ? (var.shared_ingress.certificate_arn != "" ? var.shared_ingress.certificate_arn : aws_acm_certificate_validation.ingress[0].certificate_arn) : ""
+      annotations    = var.shared_ingress.annotations
+    }
     targetGroupBinding = {
-      enabled                     = true
+      enabled                     = var.dedicated_edge_enabled
       apiVersion                  = local.auto_mode ? "eks.amazonaws.com/v1" : "elbv2.k8s.aws/v1beta1"
-      portalTargetGroupArn        = aws_lb_target_group.portal.arn
-      proxyTargetGroupArn         = aws_lb_target_group.proxy.arn
-      loadBalancerSecurityGroupId = aws_security_group.alb.id
+      portalTargetGroupArn        = var.dedicated_edge_enabled ? aws_lb_target_group.portal[0].arn : ""
+      proxyTargetGroupArn         = var.dedicated_edge_enabled ? aws_lb_target_group.proxy[0].arn : ""
+      loadBalancerSecurityGroupId = var.dedicated_edge_enabled ? aws_security_group.alb[0].id : ""
     }
   })]
 
@@ -39,6 +46,13 @@ resource "helm_release" "magpie" {
     type  = "string"
     value = var.secrets[key]
   }]
+
+  lifecycle {
+    precondition {
+      condition     = var.dedicated_edge_enabled || var.shared_ingress.enabled
+      error_message = "Enable either the dedicated edge or shared ingress."
+    }
+  }
 
   depends_on = [aws_eks_pod_identity_association.proxy, aws_lb_listener.http, module.eks]
 }
@@ -50,5 +64,5 @@ data "aws_kms_key" "ebs" {
 }
 
 locals {
-  public_url = "https://${aws_cloudfront_distribution.this.domain_name}"
+  public_url = var.shared_ingress.enabled ? "https://${var.shared_ingress.host}" : (var.dedicated_edge_enabled ? "https://${aws_cloudfront_distribution.this[0].domain_name}" : "")
 }

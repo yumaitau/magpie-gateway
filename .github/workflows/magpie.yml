@@ -55,6 +55,13 @@ jobs:
             --set secrets.MAGPIE_SESSION_SECRET=ci-session-secret \
             --set secrets.MAGPIE_ADMIN_PASSWORD=ci-admin-password-0001 \
             --set proxy.config='llm: {}'
+          helm lint deploy/helm/magpie-gateway \
+            --set secrets.MAGPIE_SESSION_SECRET=ci-session-secret \
+            --set secrets.MAGPIE_ADMIN_PASSWORD=ci-admin-password-0001 \
+            --set proxy.config='llm: {}' \
+            --set ingress.enabled=true \
+            --set ingress.host=magpie.example.com \
+            --set ingress.certificateArn=arn:aws:acm:ap-southeast-2:123456789012:certificate/example
           if helm template t deploy/helm/magpie-gateway --set secrets.MAGPIE_SESSION_SECRET=change-me >/dev/null 2>&1; then
             echo "chart accepted a default session secret" >&2
             exit 1

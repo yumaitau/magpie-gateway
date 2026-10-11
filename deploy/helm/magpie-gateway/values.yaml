@@ -93,3 +93,12 @@ containerSecurityContext:
   capabilities:
     drop:
       - ALL
+
+# Existing ALB IngressClass/IngressGroup. The cluster owns the shared ALB.
+# DNS and the ACM certificate are provisioned outside this chart.
+ingress:
+  enabled: false
+  className: alb-shared
+  host: ""
+  certificateArn: ""
+  annotations: {}

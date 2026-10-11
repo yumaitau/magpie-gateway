@@ -449,6 +449,8 @@ module "magpie" {
   existing_cluster_storage_class       = var.existing_cluster_storage_class
   load_balancer_subnet_ids             = var.load_balancer_subnet_ids
   cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+  dedicated_edge_enabled               = var.dedicated_edge_enabled
+  shared_ingress                       = var.shared_ingress
   chart_path                           = "$ROOT/deploy/helm/magpie-gateway"
 }
 
@@ -462,6 +464,10 @@ variable "existing_cluster_name" { type = string }
 variable "existing_cluster_auto_mode" { type = bool }
 variable "existing_cluster_storage_class" { type = string }
 variable "load_balancer_subnet_ids" { type = list(string) }
+variable "dedicated_edge_enabled" { type = bool }
+variable "shared_ingress" {
+  type = object({ enabled = bool, host = string, class_name = string, certificate_arn = string, annotations = map(string) })
+}
 variable "cluster_endpoint_public_access_cidrs" { type = list(string) }
 variable "secrets" {
   type      = map(string)
@@ -470,6 +476,10 @@ variable "secrets" {
 
 output "url" {
   value = module.magpie.url
+}
+
+output "ingress_certificate_validation" {
+  value = module.magpie.ingress_certificate_validation
 }
 
 output "cluster_name" {
@@ -488,6 +498,17 @@ EOF
 			--argjson auto_mode "${EKS_AUTO_MODE:-false}" \
 			--arg storage_class "${EKS_STORAGE_CLASS:-}" \
 			--arg lb_subnets "${EKS_LB_SUBNETS:-}" \
+			--argjson dedicated_edge "${DEDICATED_EDGE_ENABLED:-true}" \
+			--arg ingress_host "${INGRESS_HOST:-}" \
+			--arg ingress_class "${INGRESS_CLASS:-alb-shared}" \
+			--arg ingress_certificate "${INGRESS_CERTIFICATE_ARN:-}" \
+			--argjson ingress_annotations "$(
+				if [[ -n ${INGRESS_ANNOTATIONS_FILE:-} ]]; then
+					cat "$DIR/$INGRESS_ANNOTATIONS_FILE"
+				else
+					printf '{}'
+				fi
+			)" \
 			--arg operator "$operator/32" \
 			--arg portal_image "$(pin_image "$PORTAL_IMAGE")" \
 			--arg proxy_image "$(pin_image "$PROXY_IMAGE")" \
@@ -506,6 +527,8 @@ EOF
 			'{
 				name: $name, region: $region,
 				existing_cluster_name: $cluster,
+				dedicated_edge_enabled: $dedicated_edge,
+				shared_ingress: {enabled: ($ingress_host != ""), host: $ingress_host, class_name: $ingress_class, certificate_arn: $ingress_certificate, annotations: $ingress_annotations},
 				existing_cluster_auto_mode: $auto_mode,
 				existing_cluster_storage_class: $storage_class,
 				load_balancer_subnet_ids: ($lb_subnets | split(",") | map(select(. != ""))),
@@ -833,8 +856,11 @@ cmd_check() {
 		[[ ${body##*$'\n'} == 400 && $body == *"Magpie Gateway blocked"* ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
 	fi
 
-	code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/guardrails/request")"
-	[[ $code == 404 ]] && result "portal guardrail routes are not public" ok || result "portal guardrail routes are not public" fail "HTTP $code"
+	local private_path
+	for private_path in /guardrails/request /guardrails/response /mcp/check; do
+		code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base$private_path")"
+		[[ $code == 404 ]] && result "$private_path is not public" ok || result "$private_path is not public" fail "HTTP $code"
+	done
 
 	((failed == 0)) || die "Some checks failed."
 	say ""

@@ -97,3 +97,25 @@ variable "bedrock_regions" {
   type        = list(string)
   default     = ["ap-southeast-2", "ap-southeast-4"]
 }
+
+variable "dedicated_edge_enabled" {
+  description = "Create the dedicated CloudFront/internal ALB edge. Keep true during a shared-ingress migration, then disable after testing the new hostname."
+  type        = bool
+  default     = true
+}
+
+variable "shared_ingress" {
+  description = "Use an existing shared ALB IngressClass. DNS must point host to that ALB. Empty certificate_arn creates an ACM certificate requiring DNS validation."
+  type = object({
+    enabled         = optional(bool, false)
+    host            = optional(string, "")
+    class_name      = optional(string, "alb-shared")
+    certificate_arn = optional(string, "")
+    annotations     = optional(map(string), {})
+  })
+  default = {}
+  validation {
+    condition     = !var.shared_ingress.enabled || (can(regex("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$", var.shared_ingress.host)) && var.shared_ingress.class_name != "")
+    error_message = "Shared ingress requires a DNS hostname and an existing ALB ingress class."
+  }
+}

@@ -1,0 +1,53 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "magpie.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    alb.ingress.kubernetes.io/target-type: ip
+    # Only attach this application's routes to the existing HTTPS listener.
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: {{ required "ingress.certificateArn" .Values.ingress.certificateArn | quote }}
+    alb.ingress.kubernetes.io/actions.private-endpoints: '{"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"Not found"}}'
+spec:
+  ingressClassName: {{ required "ingress.className" .Values.ingress.className | quote }}
+  rules:
+    - host: {{ required "ingress.host" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /guardrails
+            pathType: Prefix
+            backend:
+              service:
+                name: private-endpoints
+                port:
+                  name: use-annotation
+          - path: /mcp/check
+            pathType: Prefix
+            backend:
+              service:
+                name: private-endpoints
+                port:
+                  name: use-annotation
+          {{- if .Values.proxy.enabled }}
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-proxy
+                port:
+                  number: 4000
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-portal
+                port:
+                  number: 8088
+{{- end }}
