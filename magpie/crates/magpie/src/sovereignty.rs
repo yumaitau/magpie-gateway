@@ -52,7 +52,9 @@ pub struct RouteCheck {
 }
 
 /// `OFFICIAL: Sensitive` and above stay on Australian regions.
-/// `PROTECTED` and above also need the destination on the approved list.
+/// `PROTECTED` also needs a destination on the approved list.
+/// SECRET/TOP SECRET are refused: a PROTECTED approval is not authority to
+/// process higher classifications in this deployment.
 /// Sovereign mode denies every non-Australian destination.
 pub fn check_route(
 	marking: Option<crate::pspf::Marking>,
@@ -61,6 +63,9 @@ pub fn check_route(
 	approved_protected: &[String],
 	sovereign_mode: bool,
 ) -> RouteCheck {
+	if marking.is_some_and(|m| m.at_least(crate::pspf::Marking::Secret)) {
+		return RouteCheck { allowed: false, reason: "SECRET and TOP SECRET are not authorised for this gateway. A PROTECTED destination approval does not authorise higher classifications.".into() };
+	}
 	let where_hosted = residency(region);
 	if sovereign_mode && where_hosted != Residency::Australia {
 		return RouteCheck {
@@ -164,5 +169,27 @@ mod tests {
 	fn sovereign_mode_blocks_unknown_regions() {
 		let blocked = check_route(None, "", "mystery", &[], true);
 		assert!(!blocked.allowed);
+	}
+}
+
+#[cfg(test)]
+mod higher_classification_tests {
+	use super::*;
+	#[test]
+	fn protected_approval_never_authorises_secret_or_top_secret() {
+		for marking in [
+			crate::pspf::Marking::Secret,
+			crate::pspf::Marking::TopSecret,
+		] {
+			let result = check_route(
+				Some(marking),
+				"ap-southeast-2",
+				"approved-au-model",
+				&["approved-au-model".into()],
+				false,
+			);
+			assert!(!result.allowed);
+			assert!(result.reason.contains("not authorised"));
+		}
 	}
 }

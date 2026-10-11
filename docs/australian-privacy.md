@@ -53,7 +53,9 @@ and independently configured native Agentgateway policies still operate.
 Enforcement applies Magpie actions only on routes connected to its guardrails.
 The existing LLM routes have request and response hooks. New routes/models must
 have equivalent hooks; the native MCP connection UI does not automatically wire
-the separate `/mcp/check` API into MCP traffic. Native policy editing can change
+the separate `/mcp/check` API into MCP traffic. SECRET and TOP SECRET are
+refused by Magpie in enforcement mode even if a destination has a PROTECTED
+approval; log-only records that would-block decision without blocking. Native policy editing can change
 those connections, so grant gateway edit actions carefully and verify route
 coverage after changes.
 

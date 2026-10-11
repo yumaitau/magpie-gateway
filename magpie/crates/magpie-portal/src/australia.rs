@@ -29,7 +29,7 @@ pub(super) async fn overview(State(state): State<AppState>, headers: HeaderMap) 
         vec!["Centrelink CRN, DVA, passport, driver licence".into(), "Context and format candidates; passport MRZ check digits where present. No entitlement or document validity claims.".into()],
         vec!["ABN / ACN".into(), "Published ABR/ASIC checksum filters. Public business identifiers can be allowed by policy.".into()],
         vec!["Banking, contact data and credentials".into(), "BSB, labelled account numbers, payment card candidates, Australian phone/address heuristics, email and supported secret patterns. Coverage is text-based, not image or attachment OCR.".into()],
-        vec!["PSPF protective markings".into(), "Recognises markings and caveats in text/metadata. Australian destination checks and an approved PROTECTED destination list are product policy, not evidence of accreditation or personnel clearance.".into()],
+        vec!["PSPF protective markings".into(), "Recognises markings and caveats in text/metadata. Australian destination checks and a PROTECTED destination list are product policy. SECRET/TOP SECRET are refused in enforcement mode; a PROTECTED approval cannot authorise higher classifications.".into()],
     ]);
 	let mapping = table(&["Framework", "Magpie contribution", "Organisation responsibility"], &[
         vec!["Privacy Act / APPs 1, 3, 6".into(), "Per-detector actions, approvals and metadata-only decision audit support minimisation and accountable use.".into(), "Privacy impact assessment, lawful purpose, collection notices, consent where required, and privacy policy. Detector coverage is not a legal determination.".into()],
