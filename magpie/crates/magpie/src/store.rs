@@ -167,6 +167,7 @@ impl Store {
 	pub fn migrate(&self) -> Result<()> {
 		self.conn.execute_batch(SQLITE_SCHEMA)?;
 		self.migrate_accounts()?;
+		self.conn.execute_batch(crate::alerts::SCHEMA)?;
 		Ok(())
 	}
 
@@ -581,7 +582,7 @@ fn read_revision(row: &rusqlite::Row<'_>) -> Result<Revision> {
 	})
 }
 
-fn read_audit(row: &rusqlite::Row<'_>) -> Result<AuditEvent> {
+pub(crate) fn read_audit(row: &rusqlite::Row<'_>) -> Result<AuditEvent> {
 	let at: String = row.get(1)?;
 	let detail: String = row.get(9)?;
 	Ok(AuditEvent {

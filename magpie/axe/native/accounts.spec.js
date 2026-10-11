@@ -9,7 +9,7 @@ async function login(page,username='admin',password=adminPassword){await page.go
 
 test('all governance screens stay in the native shell and pass accessibility checks',async({page})=>{
  await login(page);
- for(const path of ['dashboard','agents','catalogue','providers','policies','dlp','audit','approvals','settings','access','australia']){
+ for(const path of ['dashboard','alerts','agents','catalogue','providers','policies','dlp','audit','approvals','settings','access','australia']){
   await page.goto(`${base}/${path}`);await expect(page).toHaveURL(`${base}/ui/governance/${path}`);await expect(page.locator('.magpie-governance')).not.toBeEmpty();await expect(page.locator('.app-shell')).toHaveCount(1);await expect(page.locator('.shell')).toHaveCount(0);
   const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
  }
@@ -36,4 +36,36 @@ test('invite, accept, sign in, change password and recover within one UI',async(
 test('account and people navigation works on phones and in both themes',async({page})=>{
  await login(page);
  for(const path of ['account','people']) {await page.goto(`${base}/ui/${path}`);await expect(page.locator('main.content')).toContainText(path==='account'?'Change password':'Invite colleague');for(const width of [1440,390]){await page.setViewportSize({width,height:900});for(let i=0;i<2;i++){const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.getByRole('button',{name:'Toggle theme',exact:true}).click();}}}
+});
+
+
+test('home has no artwork banner and alert destinations save without exposing secrets', async ({page}) => {
+ await login(page);
+ await page.goto(`${base}/ui/`);
+ await expect(page.locator('.magpie-welcome')).toHaveCount(0);
+ await page.goto(`${base}/ui/governance/alerts`);
+ await expect(page.getByLabel('Email recipient (email only)',{exact:true})).not.toBeVisible();
+ await page.getByLabel('Send to',{exact:true}).selectOption('email');
+ await expect(page.getByLabel('Webhook URL (Slack, Teams or webhook)',{exact:true})).not.toBeVisible();
+ await expect(page.getByLabel('Email recipient (email only)',{exact:true})).toBeVisible();
+ await page.getByText('Email and advanced settings',{exact:true}).click();
+ await expect(page.getByLabel('SMTP host',{exact:true})).toBeVisible();
+ await page.getByLabel('Send to',{exact:true}).selectOption('slack');
+ await expect(page.getByLabel('SMTP host',{exact:true})).not.toBeVisible();
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.setViewportSize({width:1440,height:900});
+ if(process.env.MAGPIE_SCREENSHOTS) await page.screenshot({path:`${process.env.MAGPIE_SCREENSHOTS}/alerts.png`,fullPage:true});
+ await page.getByLabel('Destination name',{exact:true}).fill('Local UI test');
+ await page.getByLabel('Webhook URL (Slack, Teams or webhook)',{exact:true}).fill('https://example.com/private-ui-test');
+ await page.getByRole('button',{name:'Save destination',exact:true}).click();
+ const destination=page.locator('details').filter({has:page.locator('summary').filter({hasText:'Local UI test · slack · Off'})}).first();
+ await expect(destination).toBeVisible();
+ expect(await page.locator('main').innerHTML()).not.toContain('private-ui-test');
+ await destination.locator('summary').first().click();
+ await destination.getByRole('button',{name:'Delete destination',exact:true}).click();
+ await expect(page.getByText('No destinations yet. Add Slack, Teams, a webhook or email below.')).toBeVisible();
 });

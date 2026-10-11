@@ -14,15 +14,6 @@
       const sub = document.createElement('small'); sub.textContent = 'GATEWAY'; name.append(sub);
       brand.prepend(mark, name);
     });
-    const main = document.querySelector('main.content');
-    if (main && /^\/ui\/?$/.test(location.pathname) && !main.querySelector('.magpie-welcome')) {
-      const hero = document.createElement('section'); hero.className = 'magpie-welcome'; hero.setAttribute('aria-label', 'Magpie Gateway');
-      const banner = document.createElement('img'); banner.src = '/assets/magpie/magpie-banner-v1.webp';
-      banner.width = 2172; banner.height = 724;
-      banner.alt = 'Magpie Gateway. Australian ready. Safe agents. Sovereign AI. Real outcomes. SSO portal, policy and guardrails, Australian DLP, sovereign routing, audit and observability.';
-      hero.append(banner); main.prepend(hero);
-    }
-    if (main && !/^\/ui\/?$/.test(location.pathname)) main.querySelector('.magpie-welcome')?.remove();
   }
   async function refresh() {
     try {

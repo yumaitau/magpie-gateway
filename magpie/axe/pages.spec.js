@@ -10,6 +10,7 @@ const pages = [
   ['/policies', 'policies'],
   ['/dlp', 'dlp'],
   ['/audit', 'audit'],
+  ['/alerts', 'alerts'],
   ['/approvals', 'approvals'],
   ['/settings', 'settings'],
   ['/australia', 'australia'],

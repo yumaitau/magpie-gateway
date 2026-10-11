@@ -126,3 +126,30 @@
 		margin: 8px 0 0;
 	}
 }
+
+.alert-destination:has(select[name$='kind'] option[value='email']:checked) .alert-webhook,
+.alert-destination:not(:has(select[name$='kind'] option[value='email']:checked)) .alert-email {
+	display: none;
+}
+.setup-checklist > summary {
+	padding: 12px 0;
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.magpie-governance .alert-destination label {
+	display: block;
+	margin: 12px 0 6px;
+	font-weight: 500;
+}
+.magpie-governance .alert-destination label:has(input[type='checkbox']) {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 32px;
+}
+.magpie-governance .alert-destination input[type='checkbox'] {
+	width: 24px;
+	height: 24px;
+	flex: 0 0 24px;
+}

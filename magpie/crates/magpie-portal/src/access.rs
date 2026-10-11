@@ -58,6 +58,7 @@ pub(crate) fn page_permission(path: &str) -> Permission {
 		"/dashboard" => Permission::ReadDashboard,
 		"/policies" | "/dlp" | "/approvals" | "/australia" => Permission::ReadPolicies,
 		"/audit" => Permission::ReadAudit,
+		"/alerts" => Permission::ManageSettings,
 		"/settings" => Permission::ReadSettings,
 		"/access" => Permission::ManageAccess,
 		_ => Permission::ReadCatalogue,

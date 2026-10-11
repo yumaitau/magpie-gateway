@@ -26,7 +26,7 @@ The upstream Agentgateway UI in `ui/` is the application foundation. Build it wi
 
 The user-supplied `Glossy Magpie Emblem with Orange Ring.png` and
 `Magpie Gateway_ Sovereign AI, Australian Ready.png` now provide the product mark
-and dashboard/README banner. Optimised WebP copies live alongside the original
+and sign-in/README banner. Home and operational dashboards have no artwork banner. Optimised WebP copies live alongside the original
 portrait as `magpie-emblem-v1.webp` (256 × 256) and `magpie-banner-v1.webp`
 (2172 × 724). Preserve the full banner aspect ratio without cropping or text
 overlays; the operational mode indicator remains separate from artwork.
@@ -46,3 +46,5 @@ that group for active routes on desktop and mobile. Preserve permission filterin
 before grouping links. New model forms show the provider and credentials first;
 model naming and upstream routing live in a disclosure, expanded when editing an
 existing model. Configuring a model does not imply its connection has been tested.
+
+Setup uses an API-key field by default, with credential sources under Advanced credentials. Connection success requires an actual model response. The checklist remembers browser-local model tests and explicitly confirmed app connections, and collapses once both are complete. Alerts is an essential navigation item for administrators; destinations start disabled, with SMTP and authentication settings under a disclosure.

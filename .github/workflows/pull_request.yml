@@ -35,7 +35,7 @@ jobs:
     strategy:
       matrix:
         include:
-        - os: blacksmith-4vcpu-ubuntu-2404
+        - os: ubuntu-24.04
           name: "Proxy Test"
         - os: windows-2025
           name: "Proxy Test (Windows)"
@@ -56,12 +56,12 @@ jobs:
         # PRs restore the default branch cache; only postsubmit rolls it forward.
         save: ${{ github.ref == 'refs/heads/main' }}
     - name: Start validation dependencies
-      if: ${{ startsWith(matrix.os, 'blacksmith-') }}
+      if: ${{ matrix.os == 'ubuntu-24.04' }}
       run: tools/manage-validation-deps.sh start
     - name: Test
       run: make test
       env:
-        KEYCLOAK_AVAILABLE: ${{ startsWith(matrix.os, 'blacksmith-') && '1' || '' }}
+        KEYCLOAK_AVAILABLE: ${{ matrix.os == 'ubuntu-24.04' && '1' || '' }}
         # Generate Cargo's per-crate build report for the artifact below.
         TIMINGS: true
     - name: Upload cargo timings
@@ -71,11 +71,11 @@ jobs:
         path: target/cargo-timings/cargo-timing*.html
         retention-days: 2
     - name: Stop validation dependencies
-      if: ${{ always() && startsWith(matrix.os, 'blacksmith-') }}
+      if: ${{ always() && matrix.os == 'ubuntu-24.04' }}
       run: tools/manage-validation-deps.sh stop
 
   proxy-lint:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -125,7 +125,7 @@ jobs:
 
   #### Controller jobs ####
   controller-test:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -143,7 +143,7 @@ jobs:
       run: go test -race ./...
 
   controller-lint:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -164,7 +164,7 @@ jobs:
         make -C controller verify
 
   controller-e2e:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -204,7 +204,7 @@ jobs:
         cat controller/_test/ci-step-timings.log >> $GITHUB_STEP_SUMMARY
 
   controller-conformance:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -258,7 +258,7 @@ jobs:
         cat controller/_test/ci-step-timings.log >> $GITHUB_STEP_SUMMARY
 
   controller-gie-conformance:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:

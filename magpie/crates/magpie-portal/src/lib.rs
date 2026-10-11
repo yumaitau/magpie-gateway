@@ -4,6 +4,7 @@
 
 mod access;
 mod accounts;
+pub mod alerts;
 mod australia;
 mod native;
 mod ui;
@@ -259,6 +260,7 @@ pub fn router(state: AppState) -> Router {
 		.route("/dlp", get(dlp_page).post(dlp_post))
 		.route("/dlp/rules", post(dlp_rule_post))
 		.route("/australia", get(australia::overview))
+		.route("/alerts", get(alerts::page_get).post(alerts::post))
 		.route("/audit", get(audit_page))
 		.route("/audit.csv", get(audit_csv))
 		.route("/approvals", get(approvals_page).post(approvals_post))
@@ -1015,7 +1017,7 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
 			.count()
 	};
 	let body = format!(
-		r#"<img class="magpie-dashboard-banner" src="/assets/magpie/magpie-banner-v1.webp" width="2172" height="724" alt="Magpie Gateway. Australian ready. Safe agents. Sovereign AI. Real outcomes. SSO portal, policy and guardrails, Australian DLP, sovereign routing, audit and observability.">
+		r#"
 <div class="cards">
 <div class="card"><strong>{}</strong>Decisions</div>
 <div class="card"><strong>{}</strong>Blocks</div>

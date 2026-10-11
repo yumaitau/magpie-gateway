@@ -91,8 +91,9 @@ Australia.
 
 ## What Magpie changes, and where
 
-Nothing under `crates/`, `controller/` or `ui/` is edited. A separate
-workspace at `magpie/` holds the product code. `deploy/`, `detections/`
+The upstream transport and controller remain in `crates/` and `controller/`.
+The native React console in `ui/` includes Magpie navigation, accounts,
+onboarding and governance. The workspace at `magpie/` holds the policy and portal code. `deploy/`, `detections/`
 and `docs/` hold packaging, detection content and the compliance
 documents. `NOTICE` lists the additions.
 
@@ -197,9 +198,11 @@ Checksums that have a published algorithm:
   readable line is present. A printed passport number without a check
   digit is format-only.
 
-Format only, because no official checksum was found:
+Context and candidate checks where no official checksum was found:
 
-- TFN, eight or nine digits next to a TFN label. No checksum.
+- TFN: labelled values remain detectable; unlabelled candidates use a
+  configurable mod-11 filter. This is not ATO verification. See
+  [Australian privacy](australian-privacy.md).
 - CRN, nine digits and a trailing letter. No checksum.
 - BSB, six digits, hyphen optional, next to a BSB label. Account
   numbers next to it are six to ten digits and are not checksummed.
@@ -285,13 +288,13 @@ decision reads them.
 
 ### Deployment and evidence
 
-Compose runs the portal and agentgateway. Helm runs the portal.
+Compose and Helm run the portal and agentgateway together.
 Compose can start Presidio as a profile, using the image's own uid
 1001. They do not run Postgres.
 The portal refuses a `postgres://` URL. Portal containers are
 non-root, with a read-only root filesystem. Terraform examples cover
-ECS on AWS `ap-southeast-2` and a container app on Azure Australia
-East. CI builds the portal image, writes a CycloneDX SBOM and scans
+EKS on AWS `ap-southeast-2` (the live deployment) and a container app
+example on Azure Australia East. CI builds the portal image, writes a CycloneDX SBOM and scans
 it. A push to `main` publishes the image to GHCR and signs the digest
 with keyless cosign. No signing key is stored. The Windows guide
 cites current Claude Code, Codex and VS Code docs for the exact
@@ -319,11 +322,10 @@ page and runs axe against WCAG 2.2 AA.
 - No gRPC ExtMcp implementation. MCP enforcement is the shared engine
   behind a JSON check, plus CEL the portal generates for the proxy.
 - No SAML login. The endpoint returns 501.
-- No TFN or CRN checksum, and no invented driver-licence formats.
+- No official ATO validation, CRN checksum or invented driver-licence formats.
 - Tokenisation is not reversible.
 - Presidio is not started unless configured. Australian checksums do
   not depend on it.
 - Prompt Guard weights are not shipped.
-- The upstream React UI is unchanged. Operators who only need gateway
-  config keep using it. The Magpie portal is the control plane for
-  identity, approvals, DLP and audit.
+- Gateway editors and Magpie governance share the native React shell.
+  The portal controls identity, approvals, DLP, audit and alert delivery.

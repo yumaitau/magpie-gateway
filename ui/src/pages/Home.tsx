@@ -158,6 +158,10 @@ export function HomePage() {
 
 			{!pageDataError && !mode.isError ? (
 				<QuickStart
+					modelNames={[
+						...models.map(model => model.name),
+						...virtualModels.map(model => model.name)
+					]}
 					hasModels={callableModels > 0}
 					busy={enable.isPending}
 					onAddModel={() => void startLlm()}

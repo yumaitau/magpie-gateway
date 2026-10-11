@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { PageHeader, StatusBanner } from '@/components/Primitives';
 
 const pages = new Set([
+	'alerts',
 	'dashboard',
 	'agents',
 	'catalogue',

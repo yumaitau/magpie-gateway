@@ -35,6 +35,7 @@ import {
 	wildcardResolvedSuffix
 } from '@/modelResolution';
 import { requestableDumpModelNames } from '@/pages/models/dumpModels';
+import { markSetupStep, useSetupProgress } from '@/setupProgress';
 import type { LlmModel, LlmProvider, ProviderName } from '@/types';
 
 type ClientRecipe = {
@@ -68,6 +69,7 @@ type RequestModelOption =
 	| { kind: 'virtual'; name: string; icon: ReactNode; searchText: string };
 
 export function ClientSetupPage() {
+	const progress = useSetupProgress();
 	const mode = useConfigDumpMode();
 	// XDS mode has no local LLM config: models come from the config dump instead.
 	const dumpMode = mode.data?.mode === 'dump';
@@ -159,6 +161,24 @@ export function ClientSetupPage() {
 				title="Client Setup"
 				description="Generate connection settings and snippets for LLM clients."
 			/>
+			{!dumpMode && selectedModel ? (
+				<div className="panel">
+					<p>
+						After your app completes a request, mark this step done. Progress is saved in this
+						browser.
+					</p>
+					<button
+						type="button"
+						className="button"
+						disabled={progress.connectedModel === selectedModel}
+						onClick={() => markSetupStep('connectedModel', selectedModel)}
+					>
+						{progress.connectedModel === selectedModel
+							? 'App connection confirmed'
+							: "I've connected my app"}
+					</button>
+				</div>
+			) : null}
 			{configDataError ? (
 				<StatusBanner state="bad" title="Configuration API unavailable">
 					{configDataError.message}

@@ -1830,3 +1830,128 @@ async fn local_accounts_invites_password_changes_and_revocation() {
 		assert!(!audit.contains(secret));
 	}
 }
+
+#[tokio::test]
+async fn alerts_require_settings_permission_and_never_render_saved_secrets() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (editor, _) = client(&base);
+	assert!(
+		admin
+			.get(format!("{base}/alerts"))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_redirection()
+	);
+	login(&editor, &base, "alex").await;
+	assert_eq!(
+		editor
+			.get(format!("{base}/alerts"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	login(&admin, &base, "sam").await;
+	let form = [
+		("name", "Ops"),
+		("kind", "webhook"),
+		("trigger", "security"),
+		("url", "https://example.com/secret-destination"),
+		("bearer", "secret-token"),
+		("enabled", "1"),
+		("action", "save"),
+	];
+	let saved = admin
+		.post(format!("{base}/alerts"))
+		.form(&form)
+		.send()
+		.await
+		.unwrap();
+	assert!(
+		saved.status().is_redirection(),
+		"{}",
+		saved.text().await.unwrap()
+	);
+	let html = admin
+		.get(format!("{base}/alerts"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(html.contains("Ops"));
+	assert!(!html.contains("secret-destination"));
+	assert!(!html.contains("secret-token"));
+	let id = html
+		.split("name='id' value='")
+		.nth(1)
+		.unwrap()
+		.split('\'')
+		.next()
+		.unwrap();
+	let tested = admin
+		.post(format!("{base}/alerts"))
+		.form(&[
+			("id", id),
+			("name", "Ops"),
+			("kind", "webhook"),
+			("trigger", "security"),
+			("enabled", "1"),
+			("action", "test"),
+		])
+		.send()
+		.await
+		.unwrap();
+	assert!(tested.status().is_redirection());
+	let view: serde_json::Value = admin
+		.get(format!("{base}/alerts"))
+		.header("X-Magpie-View", "1")
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(view["title"], "Alerts");
+	assert!(view["body"].as_str().unwrap().contains("pending"));
+	let export = admin
+		.get(format!("{base}/api/export"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(!export.contains("secret-destination"));
+	assert!(!export.contains("secret-token"));
+	let forbidden = admin
+		.post(format!("{base}/alerts"))
+		.header("Origin", "https://foreign.example")
+		.form(&form)
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+	let deleted = admin
+		.post(format!("{base}/alerts"))
+		.form(&[("id", id), ("action", "delete")])
+		.send()
+		.await
+		.unwrap();
+	assert!(deleted.status().is_redirection());
+	let html = admin
+		.get(format!("{base}/alerts"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(html.contains("cancelled"));
+	assert!(html.contains("No destinations yet"));
+}

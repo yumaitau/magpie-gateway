@@ -17,6 +17,10 @@ pub struct Nav {
 
 pub const NAV: &[Nav] = &[
 	Nav {
+		path: "/alerts",
+		label: "Alerts",
+	},
+	Nav {
 		path: "/australia",
 		label: "Australian assurance",
 	},
@@ -257,6 +261,28 @@ pub fn esc(value: &str) -> String {
 }
 
 const CSS: &str = r#"
+.alert-destination label {
+ display: block;
+ margin: 12px 0 6px;
+ font-weight: 500;
+}
+.alert-destination label:has(input[type='checkbox']) {
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ min-height: 32px;
+}
+.alert-destination input[type='checkbox'] {
+ width: 24px;
+ height: 24px;
+ flex: 0 0 24px;
+}
+
+.alert-destination:has(select[name$='kind'] option[value='email']:checked) .alert-webhook,
+.alert-destination:not(:has(select[name$='kind'] option[value='email']:checked)) .alert-email {
+ display: none;
+}
+
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 "Segoe UI", "Helvetica Neue", sans-serif; color: #252a2c; background: #f7f8f7; }

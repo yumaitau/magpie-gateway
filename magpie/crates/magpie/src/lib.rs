@@ -5,6 +5,7 @@
 //! existing webhook and CEL hooks.
 
 pub mod accounts;
+pub mod alerts;
 pub mod approvals;
 pub mod au;
 pub mod audit;

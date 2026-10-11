@@ -101,6 +101,7 @@ import { ResultingYaml } from '@/policies/ResultingYaml';
 import type { AuthorizationDraft } from '@/policies/types';
 import { randomUuid } from '@/randomUuid';
 import { type SchemaHelp, useSchemaHelp } from '@/schemaHelp';
+import { markSetupStep } from '@/setupProgress';
 import type { GatewayConfig, LlmModel, LlmProvider, LlmVirtualModel, ProviderName } from '@/types';
 
 type VirtualRoutingStrategy = 'weighted' | 'failover' | 'conditional';
@@ -280,6 +281,8 @@ function ModelsEditorPage() {
 			{
 				onSuccess: () => {
 					closeModelEditor();
+					markSetupStep('testedModel', '');
+					markSetupStep('connectedModel', '');
 					setSavedModel(model.name);
 				}
 			}
@@ -302,6 +305,8 @@ function ModelsEditorPage() {
 			{
 				onSuccess: () => {
 					closeVirtualModelEditor();
+					markSetupStep('testedModel', '');
+					markSetupStep('connectedModel', '');
 					setSavedModel(model.name);
 				}
 			}
@@ -344,7 +349,7 @@ function ModelsEditorPage() {
 			) : null}
 			{saved || savedModel ? (
 				<StatusBanner
-					state="ok"
+					state="info"
 					title="Configuration saved"
 					action={
 						savedModel ? (
@@ -354,7 +359,9 @@ function ModelsEditorPage() {
 						) : undefined
 					}
 				>
-					{savedModel ? 'Send a prompt in the playground to check the connection.' : null}
+					{savedModel
+						? 'Next, test the connection in the playground. Saving does not verify provider credentials.'
+						: null}
 				</StatusBanner>
 			) : null}
 

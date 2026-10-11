@@ -659,11 +659,13 @@ function ApiKeyInput(props: {
 	value: string | SecretFromFile | null | undefined;
 	onChange: (value: string | SecretFromFile | null) => void;
 }) {
-	const [mode, setMode] = useState<ApiKeyMode>(() => apiKeyMode(props.value));
+	const [mode, setMode] = useState<ApiKeyMode>(() =>
+		props.value == null ? 'key' : apiKeyMode(props.value)
+	);
 	const [showKey, setShowKey] = useState(false);
 
 	useEffect(() => {
-		setMode(apiKeyMode(props.value));
+		if (props.value != null) setMode(apiKeyMode(props.value));
 	}, [props.value]);
 
 	const inputValue = apiKeyInputValue(props.value, mode);
@@ -680,36 +682,39 @@ function ApiKeyInput(props: {
 
 	return (
 		<div className="api-key-input-row">
-			<div className="segmented-control compact api-key-mode-control">
-				<button
-					className={mode === 'unset' ? 'active' : ''}
-					type="button"
-					onClick={() => setNextMode('unset')}
-				>
-					Unset
-				</button>
-				<button
-					className={mode === 'env' ? 'active' : ''}
-					type="button"
-					onClick={() => setNextMode('env')}
-				>
-					Env var
-				</button>
-				<button
-					className={mode === 'key' ? 'active' : ''}
-					type="button"
-					onClick={() => setNextMode('key')}
-				>
-					API key
-				</button>
-				<button
-					className={mode === 'file' ? 'active' : ''}
-					type="button"
-					onClick={() => setNextMode('file')}
-				>
-					File
-				</button>
-			</div>
+			<details open={mode === 'env' || mode === 'file' || mode === 'unset'}>
+				<summary>Advanced credentials</summary>
+				<div className="segmented-control compact api-key-mode-control">
+					<button
+						className={mode === 'unset' ? 'active' : ''}
+						type="button"
+						onClick={() => setNextMode('unset')}
+					>
+						Unset
+					</button>
+					<button
+						className={mode === 'env' ? 'active' : ''}
+						type="button"
+						onClick={() => setNextMode('env')}
+					>
+						Env var
+					</button>
+					<button
+						className={mode === 'key' ? 'active' : ''}
+						type="button"
+						onClick={() => setNextMode('key')}
+					>
+						API key
+					</button>
+					<button
+						className={mode === 'file' ? 'active' : ''}
+						type="button"
+						onClick={() => setNextMode('file')}
+					>
+						File
+					</button>
+				</div>
+			</details>
 			{mode === 'unset' ? (
 				<span className="api-key-unset-copy">No provider credential configured.</span>
 			) : (

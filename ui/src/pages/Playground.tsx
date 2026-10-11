@@ -45,6 +45,7 @@ import {
 	wildcardModelPrefix,
 	wildcardResolvedSuffix
 } from '@/modelResolution';
+import { markSetupStep, useSetupProgress } from '@/setupProgress';
 import type { CorsPolicy, LlmModel, LlmProvider, ProviderName } from '@/types';
 
 type ChatMessage = {
@@ -111,6 +112,7 @@ const legacySecretStorageKeys = [
 ];
 
 export function PlaygroundPage() {
+	const progress = useSetupProgress();
 	const {
 		config,
 		hybrid,
@@ -304,6 +306,31 @@ export function PlaygroundPage() {
 		return { tools, sessionId };
 	}
 
+	async function testConnection() {
+		if (loading || !displayRequestModel) return;
+		markSetupStep('testedModel', '');
+		setLoading(true);
+		setError(null);
+		setRunSteps([]);
+		try {
+			const response = await sendChatCompletion({
+				baseUrl: llmBaseUrl,
+				model: displayRequestModel,
+				apiKey: selectedKeyValue,
+				messages: [{ role: 'user', content: 'Reply with OK.' }]
+			});
+			if (!assistantContent(response))
+				throw new Error(
+					'The provider returned no assistant response. Check the model and credentials.'
+				);
+			markSetupStep('testedModel', selectedModel);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setLoading(false);
+		}
+	}
+
 	async function send() {
 		const userMessage = prompt.trim();
 		if (!userMessage) return;
@@ -313,6 +340,7 @@ export function PlaygroundPage() {
 			...messages,
 			userChatMessage
 		];
+		markSetupStep('testedModel', '');
 		setLoading(true);
 		setError(null);
 		setRunSteps([
@@ -361,6 +389,9 @@ export function PlaygroundPage() {
 				messages: toOpenAiMessages(outboundMessages),
 				tools
 			});
+			if (assistantContent(response) || extractToolCalls(response).length) {
+				markSetupStep('testedModel', selectedModel);
+			}
 			const firstLatencyMs = Math.round(performance.now() - started);
 			setRunSteps([
 				{ label: 'Preparing request', state: 'done' },
@@ -489,6 +520,21 @@ export function PlaygroundPage() {
 	return (
 		<div className="page-stack">
 			<PageHeader title="LLM Playground" description="Send test requests through the gateway." />
+			<div className="panel">
+				<p>
+					{progress.testedModel === selectedModel
+						? 'Model responded successfully. You can now connect your app.'
+						: 'Check your provider credentials with a short test request. Provider usage charges may apply.'}
+				</p>
+				<button
+					type="button"
+					className="button"
+					disabled={sendBlockers.length > 0 || configDataLoading || Boolean(configDataError)}
+					onClick={() => void testConnection()}
+				>
+					{loading ? 'Testing…' : 'Test connection'}
+				</button>
+			</div>
 			{configDataLoading ? (
 				<StatusBanner state="loading" title="Loading LLM configuration" />
 			) : configDataError ? (
@@ -734,7 +780,7 @@ export function PlaygroundPage() {
 							className="button primary"
 							type="button"
 							disabled={sendBlockers.length > 0}
-							onClick={send}
+							onClick={() => void send()}
 						>
 							<Send size={16} />
 							Send

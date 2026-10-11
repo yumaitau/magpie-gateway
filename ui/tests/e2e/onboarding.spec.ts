@@ -15,7 +15,6 @@ test('first model setup uses defaults and reveals the next steps after saving', 
 	await page.getByRole('combobox', { name: 'Provider', exact: true }).click();
 	await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
 	await expect(page.getByRole('textbox', { name: 'Incoming model match' })).not.toBeVisible();
-	await page.getByRole('button', { name: 'API key', exact: true }).click();
 	await page.getByPlaceholder('sk-...').fill('sk-test-onboarding');
 	await page.getByRole('button', { name: 'Save model', exact: true }).click();
 	await expect.poll(() => gateway.postedConfigs.length).toBe(2);
@@ -89,4 +88,51 @@ test('failed gateway setup stays on the start page and reports the error', async
 	await expect(page.getByRole('button', { name: 'Add your first model' })).toBeEnabled();
 	await expect(page).toHaveURL(/\/$/);
 	await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('setup completes only after a successful model response and explicit app confirmation', async ({
+	page
+}) => {
+	await mockGateway(page);
+	await page.route('**/v1/chat/completions', route =>
+		route.fulfill({ status: 401, body: 'Invalid provider credential' })
+	);
+	await page.goto('/llm/playground?model=fast');
+	await page.getByRole('button', { name: 'Test connection', exact: true }).click();
+	await expect(page.getByText('Invalid provider credential', { exact: true })).toBeVisible();
+	expect(
+		await page.evaluate(
+			() => JSON.parse(localStorage.getItem('magpie.setup.v1') || '{}').testedModel
+		)
+	).toBeFalsy();
+	await page.route('**/v1/chat/completions', route =>
+		route.fulfill({ json: { choices: [{ message: { role: 'assistant', content: 'OK' } }] } })
+	);
+	await page.getByRole('button', { name: 'Test connection', exact: true }).click();
+	await expect(
+		page.getByText('Model responded successfully. You can now connect your app.')
+	).toBeVisible();
+	await page.goto('/llm/client-setup');
+	await page.getByRole('button', { name: "I've connected my app" }).click();
+	await page.goto('/');
+	await expect(page.locator('.setup-checklist > summary')).toHaveText('Setup complete');
+	await expect(page.locator('.setup-checklist')).not.toHaveAttribute('open', '');
+	await page.reload();
+	await expect(page.locator('.setup-checklist > summary')).toHaveText('Setup complete');
+});
+
+test('API key is immediately available while alternative credential sources stay accessible', async ({
+	page
+}) => {
+	await mockGateway(page);
+	await page.goto('/llm/models#add=model');
+	await page.getByRole('combobox', { name: 'Provider', exact: true }).click();
+	await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+	await expect(page.getByPlaceholder('sk-...')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Env var', exact: true })).not.toBeVisible();
+	await page.getByText('Advanced credentials', { exact: true }).click();
+	await page.getByRole('button', { name: 'Env var', exact: true }).click();
+	await page.getByPlaceholder('ENV_VAR_NAME').fill('OPENAI_API_KEY');
+	await page.getByRole('button', { name: 'Save model', exact: true }).click();
+	await expect(page.getByText('Configuration saved', { exact: true })).toBeVisible();
 });
