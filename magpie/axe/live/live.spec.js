@@ -155,6 +155,7 @@ test('log out ends the session', async ({ page }) => {
   await signIn(page);
   await page.getByRole('button', { name: /^Account:/ }).click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  adminCookies = undefined;
   const response = await page.goto(`${base}/dashboard`);
   await expect(page).toHaveURL(/\/login$/);
   expect(response.status()).toBe(200);
@@ -166,6 +167,7 @@ test('the mode selector saves the current choice without a deployment', async ({
   const mode = await page.getByLabel('Guardrail mode', { exact: true }).inputValue();
   await expect(page.getByLabel('Guardrail mode', { exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Apply mode', exact: true }).click();
+  await expect(page.locator('.magpie-governance')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
   await page.reload();
   await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
