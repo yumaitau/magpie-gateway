@@ -322,9 +322,11 @@ async fn browser_security(
 			.into_response();
 	}
 	let mut response = next.run(request).await;
+	// Keep the Origin header on same-origin form posts for CSRF validation,
+	// while suppressing referrers when navigating to another origin.
 	response
 		.headers_mut()
-		.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
+		.insert(header::REFERRER_POLICY, "same-origin".parse().unwrap());
 	response
 		.headers_mut()
 		.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
