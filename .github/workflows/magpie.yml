@@ -132,8 +132,15 @@ jobs:
           pnpm --dir ui install --frozen-lockfile
           VITE_MAGPIE=true pnpm --dir ui build
           cargo build --manifest-path magpie/Cargo.toml -p magpie-portal
-          npm ci --prefix magpie/axe
-          cd magpie/axe && npx playwright install --with-deps chromium
+      # Keep the browser runner on the same Node version as the existing axe job.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        working-directory: magpie/axe
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - name: Native accounts and governance
         run: |
           node magpie/axe/native/mock-gateway.js > /tmp/mock-gateway.log 2>&1 &
