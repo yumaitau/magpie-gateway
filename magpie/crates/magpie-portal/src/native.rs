@@ -43,6 +43,14 @@ async fn asset(axum::extract::Path(path): axum::extract::Path<String>) -> Respon
 		"brand.css" => ("text/css", include_bytes!("../assets/brand.css")),
 		"brand.js" => ("text/javascript", include_bytes!("../assets/brand.js")),
 		"mark.svg" => ("image/svg+xml", include_bytes!("../assets/mark.svg")),
+		"magpie-emblem-v1.webp" => (
+			"image/webp",
+			include_bytes!("../assets/magpie-emblem-v1.webp"),
+		),
+		"magpie-banner-v1.webp" => (
+			"image/webp",
+			include_bytes!("../assets/magpie-banner-v1.webp"),
+		),
 		"magpie-portrait-v1.webp" => (
 			"image/webp",
 			include_bytes!("../assets/magpie-portrait-v1.webp"),
@@ -409,7 +417,7 @@ async fn proxy(State(state): State<AppState>, request: Request) -> Response {
 
 fn brand_html(html: &str) -> String {
 	html.replace("<title>agentgateway</title>", "<title>Magpie Gateway</title>")
-        .replace("href=\"/ui/favicon.svg\"", "href=\"/assets/magpie/mark.svg\"")
+        .replace("href=\"/ui/favicon.svg\"", "href=\"/assets/magpie/magpie-emblem-v1.webp\"")
         .replace("</head>", "<link rel=\"stylesheet\" href=\"/assets/magpie/brand.css\"><script src=\"/assets/magpie/brand.js\" defer></script></head>")
 }
 

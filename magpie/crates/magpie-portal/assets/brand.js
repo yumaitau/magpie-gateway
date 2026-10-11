@@ -14,7 +14,7 @@
       if (brand.dataset.magpie) return;
       brand.dataset.magpie = 'true'; brand.setAttribute('aria-label', 'Magpie Gateway home');
       brand.querySelectorAll('img').forEach(img => img.remove());
-      const mark = document.createElement('img'); mark.src = '/assets/magpie/mark.svg'; mark.alt = ''; mark.className = 'magpie-mark';
+      const mark = document.createElement('img'); mark.src = '/assets/magpie/magpie-emblem-v1.webp'; mark.alt = ''; mark.className = 'magpie-mark';
       const name = document.createElement('span'); name.className = 'magpie-wordmark'; name.textContent = 'Magpie';
       const sub = document.createElement('small'); sub.textContent = 'GATEWAY'; name.append(sub);
       brand.prepend(mark, name);
@@ -34,13 +34,10 @@
     const main = document.querySelector('main.content');
     if (main && /^\/ui\/?$/.test(location.pathname) && !main.querySelector('.magpie-welcome')) {
       const hero = document.createElement('section'); hero.className = 'magpie-welcome'; hero.setAttribute('aria-label', 'Magpie Gateway');
-      const text = document.createElement('div');
-      const eyebrow = document.createElement('span'); eyebrow.className = 'magpie-eyebrow'; eyebrow.textContent = 'AUSTRALIAN AI GATEWAY';
-      const title = document.createElement('h1'); title.textContent = 'Every connection. A watchful eye.';
-      const description = document.createElement('p'); description.textContent = 'Connect your models, agents and tools. Explore with Agentgateway. Govern with Magpie.';
-      text.append(eyebrow, title, description);
-      const bird = document.createElement('img'); bird.src = '/assets/magpie/magpie-portrait-v1.webp'; bird.alt = 'Australian magpie with a white nape, black chest and silver bill, perched on eucalyptus.';
-      hero.append(text, bird); main.prepend(hero);
+      const banner = document.createElement('img'); banner.src = '/assets/magpie/magpie-banner-v1.webp';
+      banner.width = 2172; banner.height = 724;
+      banner.alt = 'Magpie Gateway. Australian ready. Safe agents. Sovereign AI. Real outcomes. SSO portal, policy and guardrails, Australian DLP, sovereign routing, audit and observability.';
+      hero.append(banner); main.prepend(hero);
     }
     if (main && !/^\/ui\/?$/.test(location.pathname)) main.querySelector('.magpie-welcome')?.remove();
   }

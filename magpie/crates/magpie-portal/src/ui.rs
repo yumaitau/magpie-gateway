@@ -121,14 +121,14 @@ pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>{title} · Magpie Gateway</title>
-<link rel="icon" href="/assets/magpie/mark.svg">
+<link rel="icon" href="/assets/magpie/magpie-emblem-v1.webp">
 <style>{CSS}</style>
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <div class="shell">
 <aside>
-<p class="mark"><img src="/assets/magpie/mark.svg" width="38" height="38" alt=""> <span>Magpie<small>GATEWAY</small></span></p>
+<p class="mark"><img src="/assets/magpie/magpie-emblem-v1.webp" width="38" height="38" alt=""> <span>Magpie<small>GATEWAY</small></span></p>
 <p class="muted small">Yuma IT</p>
 {console}<nav aria-label="Primary">{nav}</nav>
 </aside>
@@ -193,7 +193,7 @@ pub fn login_page(oidc_enabled: bool, break_glass_enabled: bool, error: Option<&
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Magpie Gateway</title>
-<link rel="icon" href="/assets/magpie/mark.svg">
+<link rel="icon" href="/assets/magpie/magpie-emblem-v1.webp">
 <style>{CSS}</style>
 </head>
 <body class="login-body">
@@ -204,7 +204,7 @@ pub fn login_page(oidc_enabled: bool, break_glass_enabled: bool, error: Option<&
 <div class="login-caption"><span>AUSTRALIAN AI GATEWAY</span><h2>A watchful eye.<br>On every connection.</h2><p>Models, agents and tools. Connected with confidence.</p></div>
 </section>
 <main id="content" class="login">
-<p class="mark"><img src="/assets/magpie/mark.svg" width="38" height="38" alt=""> <span>Magpie<small>GATEWAY</small></span></p>
+<p class="mark"><img src="/assets/magpie/magpie-emblem-v1.webp" width="38" height="38" alt=""> <span>Magpie<small>GATEWAY</small></span></p>
 <h1>Welcome back.</h1><p class="login-intro">Sign in to your Magpie Gateway.</p>
 {error}
 {sso}
@@ -227,7 +227,7 @@ pub fn mock_idp_page(state: &str, action: &str) -> String {
 <head>
 <meta charset="utf-8">
 <title>Example identity provider · Magpie Gateway</title>
-<link rel="icon" href="/assets/magpie/mark.svg">
+<link rel="icon" href="/assets/magpie/magpie-emblem-v1.webp">
 <style>{CSS}</style>
 </head>
 <body>
@@ -301,6 +301,8 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 }
 .mark { display: flex; align-items: center; gap: 11px; font-size: 24px; letter-spacing: -.8px; line-height: 1.15; }
 .mark small { display: block; font-size: 9px; letter-spacing: 2.4px; margin-top: 4px; }
+.mark img { border-radius: 8px; }
+.magpie-dashboard-banner { display: block; width: 100%; height: auto; border-radius: 10px; margin-bottom: 24px; }
 .console-link { border: 1px solid #60696b; margin: 23px 0 16px; font-size: 14px; }
 .main { min-width: 0; }
 header { padding-bottom: 24px; }

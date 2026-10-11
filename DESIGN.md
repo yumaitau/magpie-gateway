@@ -6,7 +6,7 @@ An administrator reviewing AI activity at a desk in daylight needs a bright, rea
 
 ## Visual direction
 
-Ink and feather: charcoal, soft white and cool grey, with a restrained rust accent drawn from the bird's eye. The login screen uses a detailed naturalist illustration. The application uses a compact bird mark, strong typographic hierarchy, grouped navigation and clean ruled data surfaces.
+Ink and feather: charcoal, soft white and cool grey, with a restrained rust accent drawn from the bird's eye. The login screen uses a detailed naturalist illustration. The application uses the supplied orange-ring bird emblem, strong typographic hierarchy, grouped navigation and clean ruled data surfaces.
 
 ## Colour
 
@@ -23,6 +23,13 @@ The upstream Agentgateway UI in `ui/` is the application foundation. Build it wi
 ## Artwork
 
 `magpie/crates/magpie-portal/assets/magpie-portrait-v1.webp`, produced with the built-in image-generation tool. Prompt: a portrait-format contemporary naturalist screenprint of an Australian magpie with black chest, white nape and shoulders, silver bill and rust-red eye, perched on eucalyptus against charcoal; no text or UI. The bird mark is a small code-native SVG. Serve assets from the application itself.
+
+The user-supplied `Glossy Magpie Emblem with Orange Ring.png` and
+`Magpie Gateway_ Sovereign AI, Australian Ready.png` now provide the product mark
+and dashboard/README banner. Optimised WebP copies live alongside the original
+portrait as `magpie-emblem-v1.webp` (256 × 256) and `magpie-banner-v1.webp`
+(2172 × 724). Preserve the full banner aspect ratio without cropping or text
+overlays; the operational mode indicator remains separate from artwork.
 
 ## Motion
 

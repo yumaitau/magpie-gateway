@@ -1,3 +1,5 @@
+![Magpie Gateway. Australian ready. Safe agents. Sovereign AI. Real outcomes.](crates/magpie-portal/assets/magpie-banner-v1.webp)
+
 # Magpie Gateway policy workspace
 
 This workspace is Yuma IT's addition. It does not modify the agentgateway

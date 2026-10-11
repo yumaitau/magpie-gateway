@@ -946,7 +946,8 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
 			.count()
 	};
 	let body = format!(
-		r#"<div class="cards">
+		r#"<img class="magpie-dashboard-banner" src="/assets/magpie/magpie-banner-v1.webp" width="2172" height="724" alt="Magpie Gateway. Australian ready. Safe agents. Sovereign AI. Real outcomes. SSO portal, policy and guardrails, Australian DLP, sovereign routing, audit and observability.">
+<div class="cards">
 <div class="card"><strong>{}</strong>Decisions</div>
 <div class="card"><strong>{}</strong>Blocks</div>
 <div class="card"><strong>{}</strong>DLP hits</div>
