@@ -17,7 +17,8 @@
   --line: oklch(32% .008 220); --line-strong: oklch(44% .01 220);
 }
 .magpie-mark { width: 38px; height: 38px; flex-shrink: 0; }
-.brand { display: flex; flex-direction: row; align-items: center; gap: 10px; padding-block: 16px; }
+.brand { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; padding-block: 16px; }
+.brand small { width: auto; }
 .magpie-wordmark { font-size: 23px; font-weight: 650; letter-spacing: -.8px; line-height: 1.1; }
 .magpie-wordmark small { display: block; font-size: 9px; letter-spacing: 2.3px; margin-top: 4px; color: var(--muted); }
 .brand > small { margin-left: auto; font-size: 10px; }
