@@ -29,9 +29,12 @@ A `postgres://` URL is refused; use a SQLite file or `:memory:`.
 
 Set `MAGPIE_GUARDRAIL_MODE=log-only` to evaluate policy without blocking or
 rewriting LLM requests, LLM responses or `/mcp/check` traffic. The default is
-`enforce`; unknown values stop startup. The mode comes from the deployment,
-not request headers or portal policy imports. Settings shows the mode and
-all portal pages show a banner during a trial.
+`enforce`; unknown values stop startup. This is an initial default only.
+Use **Settings → Guardrail mode → Apply mode** to switch between log-only
+and enforcement immediately, without redeploying. The saved choice survives
+restarts. The Change enforcement mode permission controls access to this
+action. Settings shows the current mode and all portal pages show a banner
+during a trial. Policy imports cannot overwrite it.
 
 Audit decisions are `log`, with the would-be policy action in
 `detail.wouldAction`, the mode in `detail.mode`, and the findings and reason
@@ -49,10 +52,22 @@ and does not call `/mcp/check`. Review those separate controls before an MCP
 trial. Webhook transport failures also retain the proxy's configured failure
 mode; the engagement proxy remains fail-closed if the portal is unavailable.
 
-To roll out enforcement, set `MAGPIE_GUARDRAIL_MODE=enforce` and restart the
-portal. Policy rules and approvals are kept, so the same findings now take
-effect. For Helm, use `portal.environment.MAGPIE_GUARDRAIL_MODE`; for engagement
-deployments use `GUARDRAIL_MODE` in `magpie.conf` and run `./magpie.sh up`.
+To roll out enforcement, select **Enforcement** in Settings and click **Apply
+mode**. Changes are audited and take effect for new requests immediately.
+In-flight requests finish using the mode they started with. Policy rules and
+approvals are kept. `MAGPIE_GUARDRAIL_MODE` (Helm: `portal.environment`, engagement:
+`GUARDRAIL_MODE` in `magpie.conf`) only seeds a database with no saved mode.
+
+## Access control
+
+Use **Access control** to create and edit roles with individual action grants,
+assign roles to user groups, select users, and map identity-provider groups.
+Users appear after their first sign-in. Group membership uses stable user IDs.
+The built-in roles are Owner, Admin, Policy Editor, Approver, Auditor and Viewer.
+New users have no permissions until assigned by user or identity-provider group.
+Role/group changes apply to existing sessions. Disabling a user revokes their
+sessions. Access changes and mode changes are persisted and audited atomically.
+See [access-control.md](../docs/access-control.md) for permissions and defaults.
 
 Build and test from the repository root:
 

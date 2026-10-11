@@ -2,6 +2,7 @@
 //!
 //! Telemetry, Presidio and audit sinks stay off unless settings name an endpoint.
 
+mod access;
 mod ui;
 
 use std::collections::HashMap;
@@ -21,9 +22,8 @@ use magpie::guardrail::{
 	self, Inspect, McpCheckRequest, Phase, PolicySet, PromptWebhook, ResponseWebhook, WebhookMessage,
 };
 use magpie::identity::{
-	self, BreakGlassConfig, IdClaims, OidcProviderKind, Permission, Role, RoleMap, SessionCodec,
-	SessionRecord, authorise, issuer_for, roles_from_groups, start_pkce, verify_break_glass,
-	verify_hs256,
+	self, BreakGlassConfig, IdClaims, OidcProviderKind, Permission, RoleMap, SessionCodec,
+	SessionRecord, issuer_for, roles_from_groups, start_pkce, verify_break_glass, verify_hs256,
 };
 use magpie::presidio::{self, PresidioEntity};
 use magpie::register::{self, UseCase};
@@ -34,6 +34,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub struct Config {
+	/// Initial mode only; the portal persists subsequent administrator choices.
 	pub guardrail_mode: guardrail::Mode,
 	pub database_path: String,
 	pub cookie_secure: bool,
@@ -132,6 +133,15 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 		&config.bootstrap_owner,
 		&config.bootstrap_protected,
 	)?;
+	if store.access_control()?.is_none() {
+		store.set_access_control(
+			&magpie::rbac::AccessControl::defaults(&config.role_map),
+			"deployment",
+		)?;
+	}
+	if store.guardrail_mode()?.is_none() {
+		store.set_guardrail_mode(config.guardrail_mode, "deployment")?;
+	}
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
@@ -179,6 +189,10 @@ pub fn router(state: AppState) -> Router {
 			"/mock-idp/.well-known/openid-configuration",
 			get(mock_discovery),
 		)
+		.route("/access", get(access::access_page))
+		.route("/access/roles", post(access::role_post))
+		.route("/access/groups", post(access::group_post))
+		.route("/access/users", post(access::user_post))
 		.route("/dashboard", get(dashboard))
 		.route("/agents", get(agents_page))
 		.route("/catalogue", get(catalogue_page))
@@ -192,6 +206,10 @@ pub fn router(state: AppState) -> Router {
 		.route("/revisions/{id}/approve", post(approve_revision))
 		.route("/revisions/{id}/rollback", post(rollback_revision))
 		.route("/settings", get(settings_page).post(settings_post))
+		.route(
+			"/settings/guardrail-mode",
+			get(guardrail_mode_get).post(guardrail_mode_post),
+		)
 		.route("/use-cases.csv", get(use_cases_csv).post(use_cases_import))
 		.route("/api/export", get(export_docs))
 		.route("/api/import", post(import_docs))
@@ -471,7 +489,7 @@ fn finish_login(
 		.as_deref()
 		.or(claims.preferred_username.as_deref())
 		.unwrap_or("");
-	let (record, cookie) = match state.inner.codec.issue(
+	let (mut record, _) = match state.inner.codec.issue(
 		&claims.sub,
 		email,
 		claims.name.as_deref().unwrap_or(&claims.sub),
@@ -484,6 +502,28 @@ fn finish_login(
 			return login_error(state, &error.to_string());
 		},
 	};
+	record.identity_groups = groups;
+	let (record, cookie) = match state.inner.codec.touch(record, now) {
+		Ok(pair) => pair,
+		Err(error) => return login_error(state, &error.to_string()),
+	};
+	let user = magpie::rbac::PortalUser {
+		subject: record.subject.clone(),
+		name: record.name.clone(),
+		email: record.email.clone(),
+		last_login: now.to_rfc3339(),
+		disabled: false,
+	};
+	if state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.remember_portal_user(&user)
+		.is_err()
+	{
+		return login_error(state, "Could not save the signed-in user.");
+	}
 	let _ = state.inner.store.lock().expect("db").put_session(
 		&record.session_id,
 		&record.subject,
@@ -744,6 +784,23 @@ fn session_from(
 		.get_session(&opened.session_id)
 		.ok()
 		.flatten();
+	if !opened.break_glass {
+		let user = state
+			.inner
+			.store
+			.lock()
+			.expect("db")
+			.portal_user(&opened.subject);
+		if !matches!(user, Ok(Some(ref user)) if !user.disabled) {
+			return Err(
+				(
+					StatusCode::FORBIDDEN,
+					"Your portal account is disabled or requires a new sign-in.",
+				)
+					.into_response(),
+			);
+		}
+	}
 	if stored.is_none() {
 		return Err(Redirect::to("/login").into_response());
 	}
@@ -761,17 +818,18 @@ fn session_from(
 	Ok((touched, resealed))
 }
 
-fn viewer_of(session: &SessionRecord) -> ui::Viewer {
+fn viewer_of(state: &AppState, session: &SessionRecord) -> ui::Viewer {
 	ui::Viewer {
 		name: session.name.clone(),
 		email: session.email.clone(),
-		roles: session.roles.clone(),
+		roles: access::role_names(state, session),
+		permissions: access::permissions(state, session),
 		break_glass: session.break_glass,
 	}
 }
 
 fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: String) -> Response {
-	let body = if state.inner.config.guardrail_mode == guardrail::Mode::LogOnly {
+	let body = if load_settings(state).guardrail_mode == guardrail::Mode::LogOnly {
 		format!(
 			r#"<p class="banner warn" role="status">Log-only trial: policies are evaluated and logged, but traffic is not blocked or changed. Kill switches are also log-only.</p>{body}"#
 		)
@@ -780,10 +838,13 @@ fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: St
 	};
 	match session_from(state, headers) {
 		Ok((session, cookie)) => {
+			if !access::allows(state, &session, access::page_permission(path)) {
+				return (StatusCode::FORBIDDEN, "Your role cannot view this page.").into_response();
+			}
 			let mut response = Html(ui::layout(
 				title,
 				path,
-				Some(&viewer_of(&session)),
+				Some(&viewer_of(state, &session)),
 				state.inner.config.demo,
 				&body,
 			))
@@ -797,7 +858,8 @@ fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: St
 			let viewer = ui::Viewer {
 				name: "Alex Nguyen".into(),
 				email: "alex.nguyen@example.gov.au".into(),
-				roles: vec![Role::Auditor],
+				roles: vec!["Auditor".into()],
+				permissions: magpie::rbac::ACTIONS.iter().map(|(p, _, _)| *p).collect(),
 				break_glass: false,
 			};
 			let _ = response;
@@ -823,8 +885,9 @@ fn require(
 		);
 	}
 	let (session, _) = session_from(state, headers)?;
-	authorise(&session.roles, permission)
-		.map_err(|_| (StatusCode::FORBIDDEN, "Your role cannot do that.").into_response())?;
+	if !access::allows(state, &session, permission) {
+		return Err((StatusCode::FORBIDDEN, "Your role cannot do that.").into_response());
+	}
 	Ok(session)
 }
 
@@ -1211,7 +1274,7 @@ async fn dlp_post(
 	headers: HeaderMap,
 	Form(form): Form<DlpForm>,
 ) -> Response {
-	if let Err(response) = require(&state, &headers, Permission::EditPolicy) {
+	if let Err(response) = require(&state, &headers, Permission::EditDlp) {
 		return response;
 	}
 	let outcome = dlp::inspect(
@@ -1457,7 +1520,7 @@ async fn approvals_post(
 	headers: HeaderMap,
 	Form(form): Form<ApprovalForm>,
 ) -> Response {
-	let session = match require(&state, &headers, Permission::EditPolicy) {
+	let session = match require(&state, &headers, Permission::SubmitApproval) {
 		Ok(session) => session,
 		Err(response) => return response,
 	};
@@ -1573,6 +1636,24 @@ async fn rollback_revision(
 	let Some(revision) = store.get_revision(&id).ok().flatten() else {
 		return (StatusCode::NOT_FOUND, "No such revision").into_response();
 	};
+	let permission = match revision.kind.as_str() {
+		"settings" | "kill" => Permission::ManageSettings,
+		"dlp_rule" => Permission::EditDlp,
+		"approval" => Permission::Approve,
+		_ => Permission::EditPolicy,
+	};
+	if !store
+		.access_control()
+		.ok()
+		.flatten()
+		.is_some_and(|a| a.allows(&session, permission))
+	{
+		return (
+			StatusCode::FORBIDDEN,
+			"Your role cannot roll back this type of change.",
+		)
+			.into_response();
+	}
 	if revision.status != magpie::change::RevisionStatus::Active {
 		return (
 			StatusCode::CONFLICT,
@@ -1608,10 +1689,32 @@ async fn rollback_revision(
 }
 
 async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
+	let settings_disabled = if require(&state, &headers, Permission::ManageSettings).is_ok() {
+		""
+	} else {
+		"disabled"
+	};
+	let mode_disabled = if require(&state, &headers, Permission::ChangeEnforcement).is_ok() {
+		""
+	} else {
+		"disabled"
+	};
 	let settings = load_settings(&state);
 	let body = format!(
-		r#"<p>Guardrail mode: <strong>{}</strong>. Set MAGPIE_GUARDRAIL_MODE in the deployment to log-only or enforce, then redeploy.</p>
-<form method="post" action="/settings">
+		r#"<h2>Enforcement</h2>
+<p>Current mode: <strong>{}</strong></p>
+<form method="post" action="/settings/guardrail-mode">
+<label for="guardrail_mode">Guardrail mode</label>
+<select id="guardrail_mode" name="mode" aria-describedby="guardrail-mode-help" {}>
+<option value="log-only" {}>Log-only — record findings and allow traffic unchanged</option>
+<option value="enforce" {}>Enforcement — apply policy actions</option>
+</select>
+<p id="guardrail-mode-help">Applies to new requests immediately and stays saved across restarts. Log-only also makes kill switches log-only. Authentication stays required.</p>
+<button type="submit" {}>Apply mode</button>
+</form>
+<p>Changing this mode requires the Change enforcement mode permission. Changes take effect immediately and are audited; policy edits below retain their existing approval process.</p>
+<h2>Policy settings</h2>
+<form method="post" action="/settings"><fieldset {}><legend>Policy settings and kill switches</legend>
 <label for="sovereign">Sovereign mode</label>
 <select id="sovereign" name="sovereign"><option value="true" {}>On</option><option value="false" {}>Off</option></select>
 <label for="telemetry">Telemetry and phone-home</label>
@@ -1625,13 +1728,18 @@ async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 <label for="kill_agent">Per-agent kill switch</label>
 <input id="kill_agent" name="kill_agent" value="{}" placeholder="agent id, or leave empty">
 <button type="submit">Save settings</button>
-</form>
+</fieldset></form>
 <p>The kill switch is written immediately. Other settings wait for a second person when that control is on.</p>
 <p>Break-glass is {}.</p>
 <p>SAML 2.0 is not enabled.</p>
 <p>Presidio, when configured, uses ghcr.io/data-privacy-stack images. Microsoft's registry is not used.</p>
 <p>Prompt injection can call a webhook or a model you host. Llama Prompt Guard 2 weights are not included. They are under the Llama 4 Community License.</p>"#,
-		state.inner.config.guardrail_mode.as_str(),
+		settings.guardrail_mode.as_str(),
+		mode_disabled,
+		selected(settings.guardrail_mode == guardrail::Mode::LogOnly),
+		selected(settings.guardrail_mode == guardrail::Mode::Enforce),
+		mode_disabled,
+		settings_disabled,
 		selected(settings.sovereign_mode),
 		selected(!settings.sovereign_mode),
 		selected(!settings.telemetry_enabled),
@@ -1649,6 +1757,47 @@ async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 	);
 	let body = format!("{body}{}", pending_html(&state));
 	page(&state, &headers, "/settings", "Settings", body)
+}
+
+async fn guardrail_mode_get(State(state): State<AppState>, headers: HeaderMap) -> Response {
+	if let Err(response) = require(&state, &headers, Permission::ReadSettings) {
+		return response;
+	}
+	Json(json!({"mode": load_settings(&state).guardrail_mode})).into_response()
+}
+
+#[derive(Deserialize)]
+struct GuardrailModeForm {
+	mode: String,
+}
+
+async fn guardrail_mode_post(
+	State(state): State<AppState>,
+	headers: HeaderMap,
+	Form(form): Form<GuardrailModeForm>,
+) -> Response {
+	let session = match require(&state, &headers, Permission::ChangeEnforcement) {
+		Ok(session) => session,
+		Err(response) => return response,
+	};
+	let mode = match form.mode.parse::<guardrail::Mode>() {
+		Ok(mode) => mode,
+		Err(_) => return (StatusCode::BAD_REQUEST, "Choose log-only or enforce.").into_response(),
+	};
+	let result = state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.set_guardrail_mode(mode, &session.email);
+	match result {
+		Ok(()) => Redirect::to("/settings").into_response(),
+		Err(_) => (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"Could not save the mode. No change was applied.",
+		)
+			.into_response(),
+	}
 }
 
 #[derive(Deserialize)]
@@ -1723,7 +1872,7 @@ async fn settings_post(
 }
 
 async fn use_cases_csv(State(state): State<AppState>, headers: HeaderMap) -> Response {
-	if let Err(response) = require(&state, &headers, Permission::ReadCatalogue) {
+	if let Err(response) = require(&state, &headers, Permission::ExportPolicy) {
 		return response;
 	}
 	let docs = state
@@ -1750,7 +1899,7 @@ async fn use_cases_import(
 	headers: HeaderMap,
 	body: String,
 ) -> Response {
-	let session = match require(&state, &headers, Permission::EditPolicy) {
+	let session = match require(&state, &headers, Permission::ImportPolicy) {
 		Ok(session) => session,
 		Err(response) => return response,
 	};
@@ -1800,16 +1949,22 @@ async fn use_cases_import(
 }
 
 async fn export_docs(State(state): State<AppState>, headers: HeaderMap) -> Response {
-	if let Err(response) = require(&state, &headers, Permission::ReadCatalogue) {
+	if let Err(response) = require(&state, &headers, Permission::ExportPolicy) {
 		return response;
 	}
-	let docs = state
+	let mut docs = state
 		.inner
 		.store
 		.lock()
 		.expect("db")
 		.export_documents()
 		.unwrap_or_default();
+	docs.retain(|doc| {
+		matches!(
+			doc.kind.as_str(),
+			"policy" | "dlp_rule" | "approval" | "provider" | "agent" | "argument_rule"
+		)
+	});
 	Json(json!({"example": state.inner.config.demo, "documents": docs})).into_response()
 }
 
@@ -1818,13 +1973,25 @@ async fn import_docs(
 	headers: HeaderMap,
 	Json(body): Json<Value>,
 ) -> Response {
-	let session = match require(&state, &headers, Permission::EditPolicy) {
+	let session = match require(&state, &headers, Permission::ImportPolicy) {
 		Ok(session) => session,
 		Err(response) => return response,
 	};
 	let Some(items) = body.get("documents").and_then(|value| value.as_array()) else {
 		return (StatusCode::BAD_REQUEST, "expected documents").into_response();
 	};
+	if items.iter().any(|item| {
+		!matches!(
+			item.get("kind").and_then(Value::as_str),
+			Some("policy" | "dlp_rule" | "approval" | "provider" | "agent" | "argument_rule")
+		)
+	}) {
+		return (
+			StatusCode::BAD_REQUEST,
+			"Only policy, DLP, approval, provider, agent and argument-rule documents can be imported.",
+		)
+			.into_response();
+	}
 	let store = state.inner.store.lock().expect("db");
 	for item in items {
 		if let Ok(document) = serde_json::from_value::<Document>(item.clone()) {
@@ -1972,7 +2139,7 @@ async fn run_decision(
 	};
 	let argument_rules = load_argument_rules(state);
 	let policy = PolicySet {
-		mode: state.inner.config.guardrail_mode,
+		mode: settings.guardrail_mode,
 		rules: &rules,
 		approvals: &approvals,
 		approved_protected: &settings.approved_protected,
@@ -2269,6 +2436,7 @@ async fn scim_delete_group(
 
 #[derive(Clone)]
 struct Settings {
+	guardrail_mode: guardrail::Mode,
 	sovereign_mode: bool,
 	telemetry_enabled: bool,
 	presidio_analyzer_url: String,
@@ -2281,6 +2449,7 @@ struct Settings {
 
 fn load_settings(state: &AppState) -> Settings {
 	let store = state.inner.store.lock().expect("db");
+	let guardrail_mode = store.guardrail_mode().ok().flatten().unwrap_or_default();
 	let body = store
 		.get_document("settings", "global")
 		.ok()
@@ -2295,6 +2464,7 @@ fn load_settings(state: &AppState) -> Settings {
 		.unwrap_or_default();
 	drop(store);
 	Settings {
+		guardrail_mode,
 		sovereign_mode: body
 			.get("sovereignMode")
 			.and_then(|value| value.as_bool())

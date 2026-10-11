@@ -71,7 +71,10 @@ async fn main() {
 		.unwrap_or_else(|| "enforce".into())
 		.parse::<magpie::guardrail::Mode>()
 		.unwrap_or_else(|error| fail(&error.to_string()));
-	println!("Magpie guardrail mode: {}", guardrail_mode.as_str());
+	println!(
+		"Magpie initial guardrail mode (used only when unset): {}",
+		guardrail_mode.as_str()
+	);
 	let config = magpie_portal::Config {
 		guardrail_mode,
 		database_path: database,

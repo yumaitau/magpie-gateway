@@ -54,7 +54,8 @@ impl Role {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Permission {
 	ReadDashboard,
 	ReadCatalogue,
@@ -65,6 +66,14 @@ pub enum Permission {
 	ManageSettings,
 	ManageIdentity,
 	UseBreakGlass,
+	ChangeEnforcement,
+	ManageAccess,
+	ReadSettings,
+	ReadPolicies,
+	EditDlp,
+	SubmitApproval,
+	ImportPolicy,
+	ExportPolicy,
 }
 
 impl Role {
@@ -73,11 +82,23 @@ impl Role {
 		match self {
 			Self::Owner => true,
 			Self::Admin => !matches!(permission, UseBreakGlass),
-			Self::PolicyEditor => matches!(permission, ReadDashboard | ReadCatalogue | EditPolicy),
-			Self::Approver => matches!(permission, ReadDashboard | ReadCatalogue | Approve),
+			Self::PolicyEditor => matches!(
+				permission,
+				ReadDashboard
+					| ReadCatalogue
+					| ReadPolicies
+					| EditPolicy
+					| EditDlp
+					| SubmitApproval
+					| ExportPolicy
+			),
+			Self::Approver => matches!(
+				permission,
+				ReadDashboard | ReadCatalogue | ReadPolicies | Approve
+			),
 			Self::Auditor => matches!(
 				permission,
-				ReadDashboard | ReadCatalogue | ReadAudit | ExportAudit
+				ReadDashboard | ReadCatalogue | ReadPolicies | ReadSettings | ReadAudit | ExportAudit
 			),
 			Self::Viewer => matches!(permission, ReadDashboard | ReadCatalogue),
 		}
@@ -371,6 +392,8 @@ pub struct SessionRecord {
 	pub subject: String,
 	pub email: String,
 	pub name: String,
+	#[serde(default)]
+	pub identity_groups: Vec<String>,
 	pub roles: Vec<Role>,
 	pub issued_at: DateTime<Utc>,
 	pub last_seen: DateTime<Utc>,
@@ -409,6 +432,7 @@ impl SessionCodec {
 			email: email.to_string(),
 			name: name.to_string(),
 			roles,
+			identity_groups: vec![],
 			issued_at: now,
 			last_seen: now,
 			absolute_expiry: now

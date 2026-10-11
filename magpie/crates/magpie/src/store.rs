@@ -56,6 +56,14 @@ BEFORE DELETE ON audit_events
 BEGIN
   SELECT RAISE(ABORT, 'audit events are immutable');
 END;
+CREATE TABLE IF NOT EXISTS portal_users (
+  subject TEXT PRIMARY KEY,
+  body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runtime_settings (
+  name TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,
@@ -109,6 +117,14 @@ FOR EACH ROW EXECUTE FUNCTION magpie_audit_immutable();
 DROP TRIGGER IF EXISTS audit_events_no_delete ON audit_events;
 CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
 FOR EACH ROW EXECUTE FUNCTION magpie_audit_immutable();
+CREATE TABLE IF NOT EXISTS portal_users (
+  subject TEXT PRIMARY KEY,
+  body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runtime_settings (
+  name TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,
@@ -150,6 +166,159 @@ impl Store {
 
 	pub fn migrate(&self) -> Result<()> {
 		self.conn.execute_batch(SQLITE_SCHEMA)?;
+		Ok(())
+	}
+
+	pub fn access_control(&self) -> Result<Option<crate::rbac::AccessControl>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT value FROM runtime_settings WHERE name = 'access_control'")?;
+		let mut rows = statement.query([])?;
+		rows
+			.next()?
+			.map(|row| {
+				let value: String = row.get(0)?;
+				Ok(serde_json::from_str(&value)?)
+			})
+			.transpose()
+	}
+
+	pub fn set_access_control(&self, access: &crate::rbac::AccessControl, actor: &str) -> Result<()> {
+		access.validate()?;
+		let transaction = self.conn.unchecked_transaction()?;
+		let before = self.access_control()?;
+		self.conn.execute(
+			"INSERT INTO runtime_settings (name, value) VALUES ('access_control', ?1)
+			ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+			params![serde_json::to_string(access)?],
+		)?;
+		self.append_audit(&AuditEvent::new(
+			"access",
+			actor,
+			"",
+			"",
+			"",
+			"allow",
+			"Roles or user groups updated.",
+			serde_json::json!({"before": before, "after": access}),
+		))?;
+		transaction.commit()?;
+		Ok(())
+	}
+
+	pub fn portal_users(&self) -> Result<Vec<crate::rbac::PortalUser>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT body FROM portal_users ORDER BY subject")?;
+		let mut rows = statement.query([])?;
+		let mut users = vec![];
+		while let Some(row) = rows.next()? {
+			let body: String = row.get(0)?;
+			users.push(serde_json::from_str(&body)?);
+		}
+		Ok(users)
+	}
+
+	pub fn portal_user(&self, subject: &str) -> Result<Option<crate::rbac::PortalUser>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT body FROM portal_users WHERE subject = ?1")?;
+		let mut rows = statement.query(params![subject])?;
+		rows
+			.next()?
+			.map(|row| {
+				let body: String = row.get(0)?;
+				Ok(serde_json::from_str(&body)?)
+			})
+			.transpose()
+	}
+
+	pub fn remember_portal_user(&self, user: &crate::rbac::PortalUser) -> Result<()> {
+		let mut user = user.clone();
+		if let Some(existing) = self.portal_user(&user.subject)? {
+			user.disabled = existing.disabled;
+		}
+		self.write_portal_user(&user)
+	}
+
+	fn write_portal_user(&self, user: &crate::rbac::PortalUser) -> Result<()> {
+		self.conn.execute(
+			"INSERT INTO portal_users (subject, body) VALUES (?1, ?2)
+			ON CONFLICT(subject) DO UPDATE SET body = excluded.body",
+			params![user.subject, serde_json::to_string(user)?],
+		)?;
+		Ok(())
+	}
+
+	pub fn set_user_disabled(&self, subject: &str, disabled: bool, actor: &str) -> Result<()> {
+		let transaction = self.conn.unchecked_transaction()?;
+		let mut user = self
+			.portal_user(subject)?
+			.ok_or_else(|| Error::Msg("No such user.".into()))?;
+		user.disabled = disabled;
+		self.write_portal_user(&user)?;
+		if disabled {
+			self.delete_sessions_for_subject(subject)?;
+		}
+		self.append_audit(&AuditEvent::new(
+			"access",
+			actor,
+			"",
+			"",
+			"",
+			"allow",
+			if disabled {
+				"Portal user disabled."
+			} else {
+				"Portal user enabled."
+			},
+			serde_json::json!({"subject": subject, "disabled": disabled}),
+		))?;
+		transaction.commit()?;
+		Ok(())
+	}
+
+	/// Kept outside policy documents so imports and policy rollback cannot change it.
+	pub fn guardrail_mode(&self) -> Result<Option<crate::guardrail::Mode>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT value FROM runtime_settings WHERE name = 'guardrail_mode'")?;
+		let mut rows = statement.query([])?;
+		rows
+			.next()?
+			.map(|row| {
+				let value: String = row.get(0)?;
+				value.parse()
+			})
+			.transpose()
+	}
+
+	/// Commit the mode and its audit event together, or leave both unchanged.
+	pub fn set_guardrail_mode(&self, mode: crate::guardrail::Mode, actor: &str) -> Result<()> {
+		let transaction = self.conn.unchecked_transaction()?;
+		let before = self.guardrail_mode()?;
+		if before != Some(mode) {
+			self.conn.execute(
+				"INSERT INTO runtime_settings (name, value) VALUES ('guardrail_mode', ?1)
+				 ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+				params![mode.as_str()],
+			)?;
+			self.append_audit(&AuditEvent::new(
+				"settings",
+				actor,
+				"",
+				"",
+				"",
+				"allow",
+				&format!(
+					"Guardrail mode changed from {} to {}.",
+					before.map(|value| value.as_str()).unwrap_or("unset"),
+					mode.as_str()
+				),
+				serde_json::json!({"before": before, "after": mode}),
+			))?;
+		}
+		transaction.commit()?;
 		Ok(())
 	}
 
@@ -459,6 +628,21 @@ mod tests {
 	use serde_json::json;
 
 	#[test]
+	fn guardrail_mode_and_audit_are_atomic() {
+		use crate::guardrail::Mode;
+		let store = Store::open_memory().unwrap();
+		store
+			.set_guardrail_mode(Mode::LogOnly, "deployment")
+			.unwrap();
+		store.conn.execute_batch("CREATE TRIGGER reject_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT, 'unavailable'); END;").unwrap();
+		assert!(store.set_guardrail_mode(Mode::Enforce, "admin").is_err());
+		assert_eq!(store.guardrail_mode().unwrap(), Some(Mode::LogOnly));
+		let access = crate::rbac::AccessControl::defaults(&crate::identity::RoleMap::default());
+		assert!(store.set_access_control(&access, "admin").is_err());
+		assert!(store.access_control().unwrap().is_none());
+	}
+
+	#[test]
 	fn documents_revisions_and_immutable_audit() {
 		let store = Store::open_memory().unwrap();
 		let document = Document {
@@ -516,7 +700,13 @@ mod tests {
 
 	#[test]
 	fn postgres_schema_covers_the_same_tables() {
-		for table in ["documents", "revisions", "audit_events", "sessions"] {
+		for table in [
+			"documents",
+			"revisions",
+			"audit_events",
+			"sessions",
+			"runtime_settings",
+		] {
 			assert!(SQLITE_SCHEMA.contains(table));
 			assert!(POSTGRES_SCHEMA.contains(table));
 		}

@@ -202,7 +202,7 @@ AZURE_OPENAI_REGION=$(printf '%q' "$azure_region")
 # Filled in by ./magpie.sh sso
 ENTRA_TENANT_ID=
 ENTRA_CLIENT_ID=
-# Trial traffic is logged without blocking or rewriting. Change to enforce when ready.
+# Initial mode only. After first start, change it in portal Settings.
 GUARDRAIL_MODE=log-only
 PORTAL_IMAGE=ghcr.io/yumaitau/magpie-gateway-portal:main
 PROXY_IMAGE=ghcr.io/agentgateway/agentgateway:v1.6.0
@@ -767,10 +767,23 @@ cmd_sso() {
 
 # ---------------------------------------------------------------- check
 
+# Read the saved portal choice; magpie.conf supplies only the initial default.
+live_guardrail_mode() (
+	local base="$1" jar code mode
+	jar="$(mktemp)"
+	trap 'rm -f "$jar"' EXIT
+	code="$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" \
+		--data-urlencode "username=admin" --data-urlencode "password=$MAGPIE_ADMIN_PASSWORD" \
+		"$base/api/auth/break-glass")"
+	[[ $code == 303 || $code == 307 || $code == 302 ]] || die "Admin sign-in failed (HTTP $code)."
+	mode="$(curl -fsS -b "$jar" "$base/settings/guardrail-mode" | jq -er '.mode | select(. == "enforce" or . == "log-only")')" || die "Cannot read the live guardrail mode."
+	printf '%s' "$mode"
+)
+
 cmd_check() {
 	load "${1:-}"
 	need curl jq
-	local base key person model failed=0 code body
+	local base key person model failed=0 code body mode
 	base="$(url)"
 	person="$(first_person)"
 	key="$(<"$DIR/keys/$person.key")"
@@ -783,7 +796,8 @@ cmd_check() {
 			failed=1
 		fi
 	}
-	step "Checking $base as $person with $model"
+	mode="$(live_guardrail_mode "$base")"
+	step "Checking $base as $person with $model ($mode)"
 
 	code="$(curl -s -o /dev/null -w '%{http_code}' "$base/healthz")"
 	[[ $code == 200 ]] && result "portal answers" ok || result "portal answers" fail "HTTP $code"
@@ -813,7 +827,7 @@ cmd_check() {
 	body="$(curl -s -w '\n%{http_code}' "$base/v1/messages" \
 		-H "Authorization: Bearer $key" -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
 		-d "{\"model\":\"$model\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Example only. Our ABN is 12 000 000 041.\"}]}")"
-	if [[ $GUARDRAIL_MODE == log-only ]]; then
+	if [[ $mode == log-only ]]; then
 		[[ ${body##*$'\n'} == 200 ]] && result "log-only allows an Australian identifier" ok || result "log-only allows an Australian identifier" fail "${body:0:300}"
 	else
 		[[ ${body##*$'\n'} == 400 && $body == *"Magpie Gateway blocked"* ]] && result "DLP blocks an Australian identifier" ok || result "DLP blocks an Australian identifier" fail "${body:0:300}"
@@ -840,7 +854,7 @@ cmd_uitest() {
 		cd "$ROOT/magpie/axe"
 		npm ci --silent
 		npx playwright install chromium >/dev/null
-		MAGPIE_GUARDRAIL_MODE="$GUARDRAIL_MODE" MAGPIE_LIVE_URL="$(url)" MAGPIE_ADMIN_PASSWORD="$MAGPIE_ADMIN_PASSWORD" \
+		MAGPIE_LIVE_URL="$(url)" MAGPIE_ADMIN_PASSWORD="$MAGPIE_ADMIN_PASSWORD" \
 			MAGPIE_KEY="$(<"$DIR/keys/$person.key")" MAGPIE_PERSON="$person" MAGPIE_MODEL="$model" \
 			npx playwright test live/ --reporter=list
 	)

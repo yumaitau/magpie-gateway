@@ -15,6 +15,7 @@ pub mod identity;
 pub mod policy;
 pub mod presidio;
 pub mod pspf;
+pub mod rbac;
 pub mod register;
 pub mod safety;
 pub mod scim;

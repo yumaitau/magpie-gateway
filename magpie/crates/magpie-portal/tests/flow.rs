@@ -761,3 +761,483 @@ async fn log_only_webhooks_pass_unchanged_audit_findings_and_keep_authentication
 	assert!(csv.contains("wouldAction"));
 	assert!(!csv.contains("12 000 000 041"));
 }
+
+#[tokio::test]
+async fn administrator_can_switch_live_mode_but_policy_editors_cannot() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (editor, _) = client(&base);
+	let anonymous = admin
+		.post(format!("{base}/settings/guardrail-mode"))
+		.form(&[("mode", "log-only")])
+		.send()
+		.await
+		.unwrap();
+	assert!(anonymous.status().is_redirection());
+	login(&editor, &base, "alex").await;
+	let denied = editor
+		.post(format!("{base}/settings/guardrail-mode"))
+		.form(&[("mode", "log-only")])
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+	login(&admin, &base, "sam").await;
+	let invalid = admin
+		.post(format!("{base}/settings/guardrail-mode"))
+		.form(&[("mode", "disabled")])
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+	let current: serde_json::Value = admin
+		.get(format!("{base}/settings/guardrail-mode"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(current["mode"], "enforce");
+	for mode in ["log-only", "enforce", "log-only"] {
+		let saved = admin
+			.post(format!("{base}/settings/guardrail-mode"))
+			.form(&[("mode", mode)])
+			.send()
+			.await
+			.unwrap();
+		assert_eq!(saved.status(), StatusCode::SEE_OTHER);
+		let html = admin
+			.get(format!("{base}/settings"))
+			.send()
+			.await
+			.unwrap()
+			.text()
+			.await
+			.unwrap();
+		assert!(html.contains(&format!("<strong>{mode}</strong>")));
+		assert_eq!(html.contains("Log-only trial"), mode == "log-only");
+		for phase in ["request", "response"] {
+			let message = json!({"role": "user", "content": "ABN 12 000 000 041"});
+			let body = if phase == "request" {
+				json!({"body": {"messages": [message]}})
+			} else {
+				json!({"body": {"choices": [{"message": message}]}})
+			};
+			let response: serde_json::Value = admin
+				.post(format!("{base}/guardrails/{phase}"))
+				.header("x-magpie-region", "ap-southeast-2")
+				.header("x-magpie-destination", "example-au-model")
+				.header("x-magpie-model", "example-au-model")
+				.json(&body)
+				.send()
+				.await
+				.unwrap()
+				.json()
+				.await
+				.unwrap();
+			assert_eq!(response["action"].get("body").is_some(), mode == "enforce");
+		}
+		let response: serde_json::Value = admin
+			.post(format!("{base}/mcp/check"))
+			.json(&mcp(
+				Some("unapproved"),
+				"example-au-model",
+				"ap-southeast-2",
+				"example-au-model",
+				"hello",
+			))
+			.send()
+			.await
+			.unwrap()
+			.json()
+			.await
+			.unwrap();
+		assert_eq!(
+			response["decision"],
+			if mode == "log-only" { "pass" } else { "reject" }
+		);
+	}
+	let audit = admin
+		.get(format!("{base}/audit.csv"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(audit.contains("Guardrail mode changed from enforce to log-only."));
+	assert!(audit.contains("Guardrail mode changed from log-only to enforce."));
+	assert!(audit.contains("sam.patel@example.gov.au"));
+	// General settings still use their approval flow and cannot replace the runtime choice.
+	let saved = admin
+		.post(format!("{base}/settings"))
+		.form(&[
+			("sovereign", "true"),
+			("telemetry", "false"),
+			("presidio", ""),
+			("retention", "365"),
+		])
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(saved.status(), StatusCode::SEE_OTHER);
+	let current: serde_json::Value = admin
+		.get(format!("{base}/settings/guardrail-mode"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(current["mode"], "log-only");
+}
+
+#[test]
+fn runtime_mode_survives_restart_and_a_changed_deployment_default() {
+	let path = std::env::temp_dir().join(format!("magpie-mode-{}.sqlite", magpie::new_id()));
+	let mut initial = config(BreakGlassConfig::default(), false);
+	initial.database_path = path.to_str().unwrap().into();
+	initial.guardrail_mode = magpie::guardrail::Mode::LogOnly;
+	drop(magpie_portal::state(initial).unwrap());
+	{
+		let store = magpie::store::Store::open_path(path.to_str().unwrap()).unwrap();
+		assert_eq!(
+			store.guardrail_mode().unwrap(),
+			Some(magpie::guardrail::Mode::LogOnly)
+		);
+		store
+			.set_guardrail_mode(magpie::guardrail::Mode::Enforce, "administrator")
+			.unwrap();
+		let mut access = store.access_control().unwrap().unwrap();
+		access.groups.push(magpie::rbac::UserGroup {
+			id: "persisted".into(),
+			name: "Persisted".into(),
+			roles: vec!["viewer".into()],
+			members: vec!["saved-user".into()],
+			identity_groups: vec![],
+		});
+		store.set_access_control(&access, "administrator").unwrap();
+	}
+	let mut restarted = config(BreakGlassConfig::default(), false);
+	restarted.database_path = path.to_str().unwrap().into();
+	restarted.guardrail_mode = magpie::guardrail::Mode::LogOnly;
+	drop(magpie_portal::state(restarted).unwrap());
+	{
+		let store = magpie::store::Store::open_path(path.to_str().unwrap()).unwrap();
+		assert_eq!(
+			store.guardrail_mode().unwrap(),
+			Some(magpie::guardrail::Mode::Enforce)
+		);
+	}
+	{
+		let store = magpie::store::Store::open_path(path.to_str().unwrap()).unwrap();
+		assert!(
+			store
+				.access_control()
+				.unwrap()
+				.unwrap()
+				.groups
+				.iter()
+				.any(|group| group.id == "persisted")
+		);
+	}
+	std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn custom_group_roles_grant_individual_actions_and_revoke_active_sessions() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (user, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&user, &base, "alex").await;
+	let set_mode = || {
+		user
+			.post(format!("{base}/settings/guardrail-mode"))
+			.form(&[("mode", "log-only")])
+	};
+	assert_eq!(
+		set_mode().send().await.unwrap().status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		user
+			.get(format!("{base}/access"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		user
+			.post(format!("{base}/access/roles"))
+			.form(&[("id", "owner")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	let role = [
+		("id", "trial-operator"),
+		("name", "Trial operator"),
+		("permission.readSettings", "1"),
+		("permission.changeEnforcement", "1"),
+	];
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&role)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let group = [
+		("id", "trial-team"),
+		("name", "Trial team"),
+		("role.trial-operator", "1"),
+		("member.example-user", "1"),
+	];
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/groups"))
+			.form(&group)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	// No new login: a new group grants only the selected action immediately.
+	assert_eq!(
+		set_mode().send().await.unwrap().status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		user
+			.post(format!("{base}/settings"))
+			.form(&[
+				("sovereign", "true"),
+				("telemetry", "false"),
+				("presidio", ""),
+				("retention", "365")
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	// A referenced role cannot disappear silently.
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&[("id", "trial-operator"), ("operation", "delete")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	// Editing the role revokes access from the existing session.
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&[
+				("id", "trial-operator"),
+				("name", "Trial operator"),
+				("permission.readSettings", "1")
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		set_mode().send().await.unwrap().status(),
+		StatusCode::FORBIDDEN
+	);
+	// Identity-provider groups can grant the same role without manual membership.
+	admin
+		.post(format!("{base}/access/roles"))
+		.form(&role)
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/groups"))
+			.form(&[
+				("id", "trial-team"),
+				("name", "Trial team"),
+				("role.trial-operator", "1"),
+				("identity_groups", "magpie-policy-editors")
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		set_mode().send().await.unwrap().status(),
+		StatusCode::SEE_OTHER
+	);
+	// Deleting the group revokes that grant, then its role can be removed.
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/groups"))
+			.form(&[("id", "trial-team"), ("operation", "delete")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		set_mode().send().await.unwrap().status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&[("id", "trial-operator"), ("operation", "delete")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	// Protect recovery and the current access administrator from self-lockout.
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&[("id", "owner"), ("operation", "delete")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&[("id", "admin"), ("name", "Admin")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/users"))
+			.form(&[("subject", "example-admin"), ("disabled", "true")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/users"))
+			.form(&[("subject", "example-user"), ("disabled", "true")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		user
+			.get(format!("{base}/dashboard"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	admin
+		.post(format!("{base}/access/users"))
+		.form(&[("subject", "example-user"), ("disabled", "false")])
+		.send()
+		.await
+		.unwrap();
+	assert!(
+		user
+			.get(format!("{base}/dashboard"))
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_redirection()
+	);
+	login(&user, &base, "alex").await;
+	assert_eq!(
+		user
+			.get(format!("{base}/dashboard"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	let audit = admin
+		.get(format!("{base}/audit.csv"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(audit.contains("Roles or user groups updated."));
+	assert!(audit.contains("Portal user disabled."));
+}
+
+#[tokio::test]
+async fn unassigned_users_are_registered_but_have_no_default_access() {
+	let mut cfg = config(BreakGlassConfig::default(), false);
+	cfg.role_map.policy_editor_groups.clear();
+	cfg.role_map.approver_groups.clear();
+	cfg.role_map.auditor_groups.clear();
+	let base = spawn_with(cfg).await;
+	let (user, _) = client(&base);
+	login(&user, &base, "alex").await;
+	for path in [
+		"/dashboard",
+		"/catalogue",
+		"/policies",
+		"/settings",
+		"/access",
+		"/audit",
+		"/api/export",
+	] {
+		assert_eq!(
+			user
+				.get(format!("{base}{path}"))
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::FORBIDDEN,
+			"{path}"
+		);
+	}
+	let (admin, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	let access = admin
+		.get(format!("{base}/access"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(access.contains("alex.nguyen@example.gov.au"));
+}

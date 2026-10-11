@@ -148,15 +148,15 @@ Fable models have no AU inference profile and are not offered.
 ## Trial before enforcement
 
 New engagements set `GUARDRAIL_MODE=log-only` in `engagements/<client>/magpie.conf`.
-Existing configurations without this setting retain enforcement. To trial an
-existing deployment, add `GUARDRAIL_MODE=log-only` and run `./magpie.sh up <client>`.
-The portal shows a trial banner. Requests and responses pass unchanged while
-policy findings appear in the audit log and CSV as `log`, with the would-be
-action and reason. Kill switches also only log during a trial; gateway API keys
-and portal sign-in remain required.
+This seeds the initial mode. Existing deployments keep their current mode when
+upgrading. After first start, use **Settings → Guardrail mode → Apply mode** to
+switch between Log-only and Enforcement without redeploying. The choice persists
+across restarts and deployments; editing `magpie.conf` does not replace it.
 
-Review the findings, adjust policy and approvals, then set
-`GUARDRAIL_MODE=enforce` and run `./magpie.sh up <client>` to roll out enforcement.
-`./magpie.sh check <client>` verifies identifier traffic passes during a trial
-and is blocked during enforcement. The proxy still fails closed on a webhook
-outage. See `magpie/README.md` for the independent MCP proxy controls.
+The portal shows a trial banner. Requests and responses pass unchanged while
+findings appear in the audit log and CSV as `log`, with the would-be action and
+reason. Kill switches also only log during a trial. Authentication stays required.
+Review findings, adjust policy and approvals, then select Enforcement in Settings.
+`./magpie.sh check <client>` reads the live mode and tests the corresponding behavior.
+The proxy still fails closed on a webhook outage. See `magpie/README.md` for
+independent MCP proxy controls and `docs/access-control.md` for role configuration.

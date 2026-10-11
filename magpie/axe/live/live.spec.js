@@ -13,7 +13,7 @@ test.describe.configure({ mode: 'serial' });
 
 const person = process.env.MAGPIE_PERSON;
 const model = process.env.MAGPIE_MODEL;
-const logOnly = process.env.MAGPIE_GUARDRAIL_MODE === 'log-only';
+
 const tags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 async function signIn(page) {
@@ -58,7 +58,7 @@ test('a wrong password is refused', async ({ page }) => {
   await expect(page).not.toHaveURL(/\/dashboard$/);
 });
 
-for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/policies', '/dlp', '/audit', '/approvals', '/settings']) {
+for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/policies', '/dlp', '/audit', '/approvals', '/settings', '/access']) {
   test(`${path} loads for the administrator without example data and passes axe`, async ({ page }) => {
     await signIn(page);
     const response = await page.goto(`${base}${path}`);
@@ -93,6 +93,7 @@ test('the per-agent kill switch respects the deployment mode and is restored aft
   await signIn(page);
   await page.goto(`${base}/settings`);
   const previous = await page.locator('#kill_agent').inputValue();
+  const logOnly = await page.locator('#guardrail_mode').inputValue() === 'log-only';
   await setKillAgent(page, [previous, person].filter(Boolean).join(', '));
   try {
     const blocked = await ask(request, 'Reply with the word ready.');
@@ -123,4 +124,15 @@ test('log out ends the session', async ({ page }) => {
   const response = await page.goto(`${base}/dashboard`);
   await expect(page).toHaveURL(/\/login$/);
   expect(response.status()).toBe(200);
+});
+
+test('the mode selector saves the current choice without a deployment', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`${base}/settings`);
+  const mode = await page.getByLabel('Guardrail mode', { exact: true }).inputValue();
+  await expect(page.getByLabel('Guardrail mode', { exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Apply mode', exact: true }).click();
+  await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
+  await page.reload();
+  await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
 });

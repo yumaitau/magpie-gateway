@@ -1,11 +1,12 @@
 //! Server-rendered portal. No external fonts, scripts or images.
 
-use magpie::identity::Role;
+use magpie::identity::Permission;
 
 pub struct Viewer {
 	pub name: String,
 	pub email: String,
-	pub roles: Vec<Role>,
+	pub roles: Vec<String>,
+	pub permissions: Vec<Permission>,
 	pub break_glass: bool,
 }
 
@@ -48,6 +49,10 @@ pub const NAV: &[Nav] = &[
 		label: "Approvals",
 	},
 	Nav {
+		path: "/access",
+		label: "Access control",
+	},
+	Nav {
 		path: "/settings",
 		label: "Settings",
 	},
@@ -56,6 +61,12 @@ pub const NAV: &[Nav] = &[
 pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body: &str) -> String {
 	let nav = NAV
 		.iter()
+		.filter(|item| {
+			viewer.is_some_and(|v| {
+				v.permissions
+					.contains(&crate::access::page_permission(item.path))
+			})
+		})
 		.map(|item| {
 			let current = if item.path == path {
 				" aria-current=\"page\""
@@ -70,7 +81,7 @@ pub fn layout(title: &str, path: &str, viewer: Option<&Viewer>, demo: bool, body
 		let roles = viewer
 			.roles
 			.iter()
-			.map(|role| role.as_str())
+			.map(String::as_str)
 			.collect::<Vec<_>>()
 			.join(", ");
 		format!(
@@ -263,6 +274,9 @@ button.secondary { background: #fff; color: #0f3d32; border: 1px solid #0f3d32; 
 pre { background: #fff; border: 1px solid #d9d3c7; padding: 12px; white-space: pre-wrap; max-width: 52rem; }
 .login { max-width: 36rem; margin: 48px auto; background: #fff; padding: 24px; border-radius: 8px; }
 .who { margin: 0; }
+
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: .5rem; } .choice { display: flex; align-items: center; gap: .5rem; } .choice input { width: auto; } details { border-bottom: 1px solid #d1d5db; padding: 1rem 0; } summary { cursor: pointer; font-weight: 600; } fieldset { margin: 1rem 0; }
+button:disabled { cursor: not-allowed; opacity: .6; }
 @media (max-width: 800px) {
   .shell { grid-template-columns: 1fr; }
   aside { padding-bottom: 8px; }
