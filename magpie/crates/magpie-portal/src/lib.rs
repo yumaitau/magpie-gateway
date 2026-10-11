@@ -7,6 +7,7 @@ mod accounts;
 pub mod alerts;
 mod australia;
 mod controls;
+pub mod model_catalog;
 mod native;
 mod tuning;
 mod ui;
@@ -106,6 +107,7 @@ struct IssuedCode {
 }
 
 struct Inner {
+	model_catalog: model_catalog::Catalog,
 	login_dummy_hash: String,
 	gateway_client: reqwest::Client,
 	gateway_write: tokio::sync::Mutex<()>,
@@ -171,10 +173,12 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 		}
 	}
 	accounts::bootstrap(&store, &config)?;
+	let model_catalog = model_catalog::Catalog::load(&store)?;
 	let login_dummy_hash = identity::hash_password(&identity::start_pkce().verifier)?;
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
+			model_catalog,
 			login_dummy_hash,
 			gateway_client: reqwest::Client::builder()
 				.redirect(reqwest::redirect::Policy::none())
@@ -233,6 +237,10 @@ pub fn router(state: AppState) -> Router {
 		.merge(webhooks)
 		.merge(native::routes())
 		.merge(accounts::routes())
+		.route(
+			"/api/magpie/model-catalog",
+			get(model_catalog::get).post(model_catalog::sync),
+		)
 		.route("/", get(native::home))
 		.route("/healthz", get(health))
 		.route("/login", get(login))

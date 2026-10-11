@@ -6437,3 +6437,13 @@ details summary {
 		width: 100%;
 	}
 }
+
+.catalog-model-selector {
+	display: grid;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+}
+.catalog-model-selector select {
+	max-width: 100%;
+}

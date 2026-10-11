@@ -93,3 +93,38 @@ function wildcardSpecificity(pattern: string) {
 	if (wildcardIndex < 0) return Number.MAX_SAFE_INTEGER;
 	return pattern.length - 1;
 }
+
+// Catalog identity can differ from the wire protocol (for example xAI uses OpenAI).
+export function modelCatalogProvider(
+	model: Pick<LlmModel, 'provider' | 'params'>,
+	providers: LlmProvider[] = [],
+	seen = new Set<string>()
+): string {
+	const baseUrl = model.params?.baseUrl;
+	if (baseUrl) {
+		try {
+			const url = new URL(baseUrl);
+			const known: Record<string, string> = {
+				'api.x.ai': 'xai',
+				'api.openai.com': 'openai',
+				'api.anthropic.com': 'anthropic',
+				'openrouter.ai': 'openrouter'
+			};
+			if (url.hostname === 'opencode.ai') {
+				return url.pathname === '/zen/go' || url.pathname.startsWith('/zen/go/')
+					? 'opencode-go'
+					: 'opencode';
+			}
+			// Unknown compatible endpoints should let the user choose a catalog source.
+			return known[url.hostname] ?? 'custom';
+		} catch {
+			return 'custom';
+		}
+	}
+	const reference = providerReferenceName(model.provider);
+	if (!reference) return providerLabel(model.provider);
+	if (seen.has(reference)) return 'custom';
+	seen.add(reference);
+	const shared = providers.find(item => item.name === reference);
+	return shared ? modelCatalogProvider(shared, providers, seen) : 'custom';
+}

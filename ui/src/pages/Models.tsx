@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
 import { ConfigDiffSaveActions } from '@/components/ConfigDiffDrawer';
 import { MiniMonacoEditor } from '@/components/MiniMonacoEditor';
+import { ModelCatalogStatus } from '@/components/ModelCatalogStatus';
 import {
 	ConfirmDialog,
 	Drawer,
@@ -59,7 +60,7 @@ import {
 import {
 	concreteModelName,
 	isWildcardModelName,
-	resolvedProviderLabel,
+	modelCatalogProvider,
 	selectedConfiguredModelName,
 	wildcardModelPrefix,
 	wildcardResolvedSuffix
@@ -341,6 +342,8 @@ function ModelsEditorPage() {
 					</div>
 				}
 			/>
+
+			<ModelCatalogStatus />
 
 			{saveError ? (
 				<StatusBanner state="bad" title="Save failed">
@@ -855,9 +858,7 @@ function ModelEditor(props: {
 							explicitModel={explicitModel}
 							customModelExpression={customModelExpression}
 							gatewayModelName={model.name}
-							provider={
-								model.provider ? resolvedProviderLabel(model.provider, props.providers) : null
-							}
+							provider={model.provider ? modelCatalogProvider(model, props.providers) : null}
 							help={props.help}
 							setMode={setUpstreamMode}
 							setExplicitModel={setExplicitModel}
@@ -992,7 +993,7 @@ function UpstreamModelFields(props: {
 			</FieldGroup>
 
 			{mode === 'explicit' ? (
-				<Field
+				<FieldGroup
 					label="Explicit outgoing model"
 					tooltip={props.help.field<LocalLLMParams>('LocalLLMParams', 'model')}
 				>
@@ -1003,7 +1004,7 @@ function UpstreamModelFields(props: {
 						onChange={props.setExplicitModel}
 						placeholder="gpt-4.1-mini"
 					/>
-				</Field>
+				</FieldGroup>
 			) : null}
 			{mode === 'custom' ? (
 				<FieldGroup
@@ -1819,9 +1820,7 @@ function VirtualTargetSelector(props: {
 	const resolvedSuffix = wildcard
 		? wildcardResolvedSuffix(props.targetModel, selectedModelName, wildcardPrefix)
 		: '';
-	const provider = selectedModel
-		? resolvedProviderLabel(selectedModel.provider, props.providers)
-		: null;
+	const provider = selectedModel ? modelCatalogProvider(selectedModel, props.providers) : null;
 
 	return (
 		<div className="target-field">

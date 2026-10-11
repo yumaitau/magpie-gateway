@@ -2800,3 +2800,50 @@ async fn sso_callback_is_bound_to_the_browser_that_started_login() {
 			.starts_with("magpie_session=")
 	);
 }
+
+#[tokio::test]
+async fn model_catalog_requires_gateway_permissions_and_same_origin() {
+	let base = spawn(false).await;
+	let (anonymous, _) = client(&base);
+	let (admin, _) = client(&base);
+	let (editor, _) = client(&base);
+	let path = format!("{base}/api/magpie/model-catalog");
+	assert!(
+		!anonymous
+			.get(&path)
+			.send()
+			.await
+			.unwrap()
+			.status()
+			.is_success()
+	);
+	login(&admin, &base, "sam").await;
+	login(&editor, &base, "alex").await;
+	let snapshot = admin.get(&path).send().await.unwrap();
+	assert_eq!(snapshot.status(), StatusCode::OK);
+	let snapshot: serde_json::Value = snapshot.json().await.unwrap();
+	assert_eq!(snapshot["canSync"], true);
+	assert_eq!(snapshot["providers"], json!([]));
+	assert_eq!(snapshot["syncedAt"], serde_json::Value::Null);
+	assert_eq!(
+		editor
+			.post(&path)
+			.json(&json!({}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		admin
+			.post(&path)
+			.header("origin", "https://other.example")
+			.json(&json!({}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+}

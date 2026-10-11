@@ -1,7 +1,7 @@
 # Portal image. Build from the repository root:
 #   docker build -f deploy/portal.Dockerfile -t magpie-gateway-portal:0.1.0 .
 #
-# The image does not contain agentgateway. It does not phone home.
+# The image does not contain agentgateway. Model suggestions sync from models.dev.
 
 FROM node:24.17.0-bookworm-slim AS frontend
 WORKDIR /src

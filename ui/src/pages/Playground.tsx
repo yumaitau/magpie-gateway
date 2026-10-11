@@ -40,6 +40,7 @@ import {
 import { extractMcpTools, initializeMcpSession, type McpTool, nextRpcId } from '@/mcp';
 import {
 	isWildcardModelName,
+	modelCatalogProvider,
 	modelProviderLabel,
 	resolveModelName,
 	wildcardModelPrefix,
@@ -626,7 +627,7 @@ export function PlaygroundPage() {
 								/>
 							</FieldGroup>
 							{selectedModelConfig && isWildcardModelName(selectedModelConfig.name) ? (
-								<Field
+								<FieldGroup
 									label="Specific model"
 									hint="Model uses a wildcard; specify the specific model."
 								>
@@ -637,11 +638,15 @@ export function PlaygroundPage() {
 										<CatalogModelSelector
 											ariaLabel="Specific model"
 											value={specificModelSuffix}
-											provider={selectedCatalogProvider}
+											provider={
+												selectedModelConfig
+													? modelCatalogProvider(selectedModelConfig, providers)
+													: null
+											}
 											onChange={value => setSpecificModel(`${wildcardPrefix}${value}`)}
 										/>
 									</div>
-								</Field>
+								</FieldGroup>
 							) : (
 								<div aria-hidden="true" />
 							)}

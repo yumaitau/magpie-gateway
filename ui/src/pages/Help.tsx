@@ -46,6 +46,35 @@ const guides: Guide[] = [
 		done: 'You have received a response through the gateway from your own app. Home remembers model tests and confirmed app connections in this browser.'
 	},
 	{
+		id: 'model-sync',
+		title: 'Find new Claude, Codex, Grok and OpenCode models',
+		description:
+			'Model suggestions sync automatically. A catalog entry describes a model; your provider account and gateway policies determine whether you can use it.',
+		steps: [
+			{
+				title: 'Check catalog freshness',
+				body: 'Open Models and expand Model catalog. Magpie checks models.dev on startup and hourly. Administrators can press Sync now. If the source is unavailable, the last successful catalog stays available and Magpie retries after five minutes.',
+				to: '/llm/models',
+				link: 'Open Models'
+			},
+			{
+				title: 'Choose the correct provider',
+				body: 'Claude Code uses models from your Anthropic route; Codex uses your OpenAI route. Grok uses xAI. OpenCode can use many providers; OpenCode Zen and Go are separate catalog providers. For a custom endpoint, select Catalog provider in the model picker. Model IDs may differ between providers.'
+			},
+			{
+				title: 'Select or type a model',
+				body: 'In Add model, expand Model routing and choose Explicit under Outgoing model to search current suggestions. Existing wildcard routes can choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
+			},
+			{
+				title: 'Verify access and connect',
+				body: 'Save an explicit route if needed, obtain any required model approval, and test a harmless prompt in Chat Playground. Then regenerate Client Setup instructions for your coding tool. Subscription-only models are not necessarily available through an API credential.',
+				to: '/llm/client-setup',
+				link: 'Open Client Setup'
+			}
+		],
+		done: 'The new model responds through the gateway and your coding tool uses its configured gateway name.'
+	},
+	{
 		id: 'clients',
 		title: 'Connect an app or create a gateway key',
 		description:

@@ -29,6 +29,7 @@ import { llmGatewayOrigin } from '@/gatewayUrls';
 import { useConfigDumpMode, useLlmConfigData } from '@/hooks';
 import {
 	isWildcardModelName,
+	modelCatalogProvider,
 	modelProviderLabel,
 	resolveModelName,
 	wildcardModelPrefix,
@@ -135,9 +136,6 @@ export function ClientSetupPage() {
 	const specificModelSuffix = selectedModelConfig
 		? wildcardResolvedSuffix(specificModel, selectedModelConfig.name, wildcardPrefix)
 		: '';
-	const selectedCatalogProvider = selectedModelConfig
-		? modelProviderLabel(selectedModelConfig, providers)
-		: null;
 	const selectedVirtualKey =
 		apiKeyMode === 'saved'
 			? (rawVirtualKeys.find(item => item.key === selectedKey) ?? rawVirtualKeys[0])
@@ -278,18 +276,25 @@ export function ClientSetupPage() {
 						</Field>
 					) : null}
 					{selectedModelConfig && isWildcardModelName(selectedModelConfig.name) ? (
-						<Field label="Specific model" hint="Model uses a wildcard; specify the specific model.">
+						<FieldGroup
+							label="Specific model"
+							hint="Model uses a wildcard; specify the specific model."
+						>
 							<div className="target-resolved-composite">
 								{wildcardPrefix ? <span className="target-prefix">{wildcardPrefix}</span> : null}
 								<CatalogModelSelector
 									ariaLabel="Specific model"
 									value={specificModelSuffix}
-									provider={selectedCatalogProvider}
+									provider={
+										selectedModelConfig
+											? modelCatalogProvider(selectedModelConfig, providers)
+											: null
+									}
 									onChange={value => setSpecificModel(`${wildcardPrefix}${value}`)}
 									placeholder="Select or type a model"
 								/>
 							</div>
-						</Field>
+						</FieldGroup>
 					) : null}
 					<FieldGroup label="Virtual API key">
 						<Dropdown
@@ -836,7 +841,8 @@ function ClientSetupIcon(props: { recipe: ClientRecipe; compact?: boolean }) {
 
 function HighlightedCode(props: { code: string; language: string }) {
 	return (
-		<pre className={`client-code-block code-lang-${props.language}`}>
+		// biome-ignore lint/a11y/noNoninteractiveTabindex: Scrollable code must be reachable for keyboard scrolling.
+		<pre className={`client-code-block code-lang-${props.language}`} tabIndex={0}>
 			<code>{highlightCode(props.code, props.language)}</code>
 		</pre>
 	);

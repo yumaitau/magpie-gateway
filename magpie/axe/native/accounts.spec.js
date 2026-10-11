@@ -119,7 +119,7 @@ test('help guides explain setup and options with contextual navigation',async({p
  await login(page);
  await page.getByRole('link',{name:'Getting started & help',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Get your first model working',exact:true})).toBeVisible();
- for(const topic of ['start','clients','dlp','controls','alerts','people','mcp','troubleshooting']) {
+ for(const topic of ['start','model-sync','clients','dlp','controls','alerts','people','mcp','troubleshooting']) {
   await page.goto(`${base}/ui/help/${topic}`);
   await expect(page.locator('.help-guide li').first()).toBeVisible();
   const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
@@ -165,4 +165,54 @@ test('DLP tuning compares an exact exception without saving the sample',async({p
  const result=await (await page.request.get(`${base}/api/magpie/dlp`)).json();
  expect(result.rules.find(r=>r.kind==='phone').exceptions).toEqual([]);
  expect(JSON.stringify(result)).not.toContain('0412 345 678');
+});
+
+
+test('synced models follow provider endpoints and remain manually selectable', async ({page}) => {
+ await login(page);
+ const config={llm:{models:[
+  {name:'anthropic/*',provider:'anthropic'},
+  {name:'codex/*',provider:'openai'},
+  {name:'grok/*',provider:{reference:'grok'},params:{}},
+  {name:'zen/*',provider:{custom:{formats:[{type:'completions'}]}},params:{baseUrl:'https://opencode.ai/zen/v1'}},
+  {name:'custom/*',provider:{custom:{formats:[{type:'completions'}]}},params:{baseUrl:'https://example.com/v1'}}
+ ],providers:[{name:'grok',provider:'openai',params:{baseUrl:'https://api.x.ai/v1'}}]},binds:[]};
+ await page.route('**/api/config',r=>r.fulfill({json:config}));
+ await page.route('**/api/config/effective',r=>r.fulfill({json:config}));
+ const catalog={syncedAt:'2026-10-12T00:00:00Z',intervalSeconds:3600,canSync:true,error:null,providers:[
+  {provider:'anthropic',name:'Anthropic',models:['claude-opus-5-5']},
+  {provider:'openai',name:'OpenAI',models:['codex-new-fixture']},
+  {provider:'xai',name:'xAI',models:['grok-new-fixture']},
+  {provider:'opencode',name:'OpenCode',models:['zen-new-fixture']}
+ ]};
+ await page.route('**/api/magpie/model-catalog',r=>r.fulfill({json:catalog}));
+ await page.goto(`${base}/ui/llm/models`);
+ await page.getByText('Model catalog · Auto-sync hourly',{exact:true}).click();
+ await expect(page.getByText(/Last successful sync:/)).toBeVisible();
+ await page.getByRole('button',{name:'Sync now',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Sync now',exact:true})).toBeEnabled();
+ for(const [route,model] of [['anthropic/*','claude-opus-5-5'],['codex/*','codex-new-fixture'],['grok/*','grok-new-fixture'],['zen/*','zen-new-fixture']]) {
+  await page.goto(`${base}/ui/llm/client-setup`);
+  await page.getByRole('combobox',{name:'Model',exact:true}).click();
+  await page.getByRole('option',{name:route,exact:true}).click();
+  const input=page.getByRole('textbox',{name:'Specific model',exact:true});
+  await input.fill(model);
+  await expect(page.getByRole('option',{name:model,exact:true})).toBeVisible();
+  await page.getByRole('option',{name:model,exact:true}).click();
+  await expect(input).toHaveValue(model);
+ }
+ await page.getByRole('combobox',{name:'Model',exact:true}).click();
+ await page.getByRole('option',{name:'custom/*',exact:true}).click();
+ await page.getByLabel('Specific model catalog provider',{exact:true}).selectOption('xai');
+ const input=page.getByRole('textbox',{name:'Specific model',exact:true});
+ await input.fill('grok');
+ await expect(page.getByRole('option',{name:'grok-new-fixture',exact:true})).toBeVisible();
+ await input.fill('private-model-not-in-catalog');
+ await input.press('Escape');
+ await expect(input).toHaveValue('private-model-not-in-catalog');
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
 });

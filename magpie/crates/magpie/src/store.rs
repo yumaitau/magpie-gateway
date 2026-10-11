@@ -347,6 +347,22 @@ impl Store {
 		Ok(())
 	}
 
+	/// Public discovery metadata, kept outside policy documents and their approval flow.
+	pub fn model_catalog_cache(&self) -> Result<Option<Value>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT value FROM runtime_settings WHERE name = 'model_catalog_cache'")?;
+		let mut rows = statement.query([])?;
+		match rows.next()? {
+			Some(row) => Ok(Some(serde_json::from_str(&row.get::<_, String>(0)?)?)),
+			None => Ok(None),
+		}
+	}
+	pub fn set_model_catalog_cache(&self, value: &Value) -> Result<()> {
+		self.conn.execute("INSERT INTO runtime_settings (name, value) VALUES ('model_catalog_cache', ?1) ON CONFLICT(name) DO UPDATE SET value = excluded.value", params![value.to_string()])?;
+		Ok(())
+	}
+
 	pub fn get_document(&self, kind: &str, id: &str) -> Result<Option<Document>> {
 		let mut statement = self.conn.prepare(
 			"SELECT kind, id, body, revision, updated_at, updated_by, active FROM documents WHERE kind = ?1 AND id = ?2",
