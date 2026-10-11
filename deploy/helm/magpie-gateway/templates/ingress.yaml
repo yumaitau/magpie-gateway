@@ -35,6 +35,20 @@ spec:
                 port:
                   name: use-annotation
           {{- if .Values.proxy.enabled }}
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-proxy
+                port:
+                  number: 4000
+          - path: /a2a
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-proxy
+                port:
+                  number: 4000
           - path: /v1
             pathType: Prefix
             backend:

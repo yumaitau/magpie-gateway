@@ -47,7 +47,7 @@ pub fn monthly_rows(stats: &MonthlyStats) -> Vec<EvidenceRow> {
 		},
 		EvidenceRow {
 			framework: "ISM September 2026".into(),
-			reference: "ISM-1985".into(),
+			reference: "ISM-1815".into(),
 			source: "https://www.cyber.gov.au/ism/2026-09/guidelines-for-security-assurance".into(),
 			magpie_control: "SQLite triggers reject updates and deletes of audit events.".into(),
 			observation: "The application refuses modification. A database administrator can still remove the file.".into(),

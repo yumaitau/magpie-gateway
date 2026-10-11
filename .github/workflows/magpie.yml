@@ -3,6 +3,8 @@ name: magpie
 on:
   pull_request:
     paths:
+      - ui/**
+      - schema/**
       - magpie/**
       - deploy/**
       - detections/**
@@ -13,6 +15,8 @@ on:
     branches:
       - main
     paths:
+      - ui/**
+      - schema/**
       - magpie/**
       - deploy/**
       - detections/**

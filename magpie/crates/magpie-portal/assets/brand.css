@@ -1,0 +1,44 @@
+/* Keep the native console's component geometry and interactions. Brand tokens
+   echo the Australian magpie's ink plumage, pale nape and rust-red eye. */
+:root {
+  --bg: oklch(97% .003 100); --surface: oklch(99% .002 100);
+  --surface-2: oklch(95% .004 180); --surface-3: oklch(92% .006 180);
+  --text: oklch(24% .008 220); --muted: oklch(46% .012 220);
+  --primary: oklch(45% .105 35); --primary-strong: oklch(38% .09 35);
+  --accent: oklch(45% .105 35); --accent-soft: oklch(95% .018 40);
+  --line: oklch(88% .007 190); --line-strong: oklch(78% .01 190);
+}
+:root[data-theme='dark'] {
+  --bg: oklch(17% .007 220); --surface: oklch(21% .008 220);
+  --surface-2: oklch(25% .01 220); --surface-3: oklch(30% .012 220);
+  --text: oklch(95% .004 100); --muted: oklch(75% .01 200);
+  --primary: oklch(76% .10 40); --primary-strong: oklch(83% .08 40);
+  --accent: oklch(76% .10 40); --accent-soft: oklch(29% .03 35);
+  --line: oklch(32% .008 220); --line-strong: oklch(44% .01 220);
+}
+.magpie-mark { width: 38px; height: 38px; flex-shrink: 0; }
+.brand { display: flex; flex-direction: row; align-items: center; gap: 10px; padding-block: 16px; }
+.magpie-wordmark { font-size: 23px; font-weight: 650; letter-spacing: -.8px; line-height: 1.1; }
+.magpie-wordmark small { display: block; font-size: 9px; letter-spacing: 2.3px; margin-top: 4px; color: var(--muted); }
+.brand > small { margin-left: auto; font-size: 10px; }
+.magpie-nav { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 13px; }
+.magpie-nav h2 { font: inherit; font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: .8px; margin: 0 12px 6px; }
+.magpie-nav-link { display: block; padding: 7px 12px; border-radius: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
+.magpie-nav-link:hover { background: var(--surface-2); color: var(--text); }
+.magpie-mode { color: var(--accent); border: 1px solid var(--line-strong); border-radius: 20px; padding: 5px 11px; font-size: 12px; text-decoration: none; background: var(--surface); }
+.magpie-mode::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 7px; vertical-align: 1px; }
+.magpie-welcome { display: grid; grid-template-columns: 1fr 215px; min-height: 172px; background: oklch(22% .008 220); color: oklch(96% .004 100); border-radius: 10px; overflow: hidden; margin-bottom: 26px; }
+.magpie-welcome > div { padding: 28px 32px; align-self: center; }
+.magpie-eyebrow { font-size: 10px; letter-spacing: 1.9px; color: oklch(78% .02 160); font-weight: 600; }
+.magpie-welcome h1 { font-size: clamp(21px, 2vw, 30px); letter-spacing: -.8px; font-weight: 550; margin: 9px 0; color: inherit; }
+.magpie-welcome p { max-width: 490px; margin: 0; color: oklch(82% .009 190); font-size: 13px; line-height: 1.6; }
+.magpie-welcome img { height: 190px; width: 215px; object-fit: cover; object-position: 50% 44%; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .magpie-welcome { grid-template-columns: 1fr 110px; }
+  .magpie-welcome > div { padding: 22px 18px; }
+  .magpie-welcome img { width: 110px; height: 100%; object-position: 55% 50%; }
+  .magpie-welcome p { font-size: 12px; }
+  .magpie-mode { font-size: 11px; padding: 5px 8px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }

@@ -48,7 +48,7 @@ note, not a penetration test. Checked against the tree on 9 October 2026.
 | --- | --- | --- |
 | An agent calls a tool nobody approved | The decision denies it, and the generated CEL is `false` or an allow list | It does not see a call that bypasses the proxy |
 | A prompt tells the model to ignore its instructions | The baseline scanner blocks a few phrases on tool output and on responses. It is not a model | It is not Llama Prompt Guard. Weights are not shipped |
-| A tool argument contains a TFN, ABN or a private key | In-process recognisers redact, mask, tokenise or block. Presidio is optional | TFN and CRN have no published checksum. Tokenise is not reversible |
+| A tool argument contains a TFN, ABN or a private key | In-process recognisers redact, mask, tokenise or block. Presidio is optional | TFN candidates use labelled length or a non-authoritative Bower-compatible heuristic; CRN uses labelled format. Tokenise is keyed and not reversible |
 | A marked document is sent offshore | Sovereign mode and the marking check block the destination | The region comes from configuration and headers. A wrong tag is a wrong decision |
 | A portal user changes policy alone | Second-person approval can hold the change | The kill switch is immediate, on purpose. The person who wrote a change cannot approve it |
 | Someone edits the audit log | SQLite triggers abort updates and deletes | A database file can still be replaced. Retention counts old rows and does not delete them |

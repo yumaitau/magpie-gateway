@@ -60,6 +60,10 @@ pub enum HitKind {
 	Acn,
 	Tfn,
 	Medicare,
+	Ihi,
+	Dva,
+	Email,
+	PaymentCard,
 	Crn,
 	Passport,
 	PassportMrz,
@@ -81,6 +85,10 @@ impl From<IdentifierKind> for HitKind {
 			IdentifierKind::Acn => Self::Acn,
 			IdentifierKind::Tfn => Self::Tfn,
 			IdentifierKind::Medicare => Self::Medicare,
+			IdentifierKind::Ihi => Self::Ihi,
+			IdentifierKind::Dva => Self::Dva,
+			IdentifierKind::Email => Self::Email,
+			IdentifierKind::PaymentCard => Self::PaymentCard,
 			IdentifierKind::Crn => Self::Crn,
 			IdentifierKind::Passport => Self::Passport,
 			IdentifierKind::PassportMrz => Self::PassportMrz,
@@ -136,6 +144,10 @@ pub fn default_rules() -> Vec<DlpRule> {
 		HitKind::Acn,
 		HitKind::Tfn,
 		HitKind::Medicare,
+		HitKind::Ihi,
+		HitKind::Dva,
+		HitKind::Email,
+		HitKind::PaymentCard,
 		HitKind::Crn,
 		HitKind::Passport,
 		HitKind::PassportMrz,
@@ -169,12 +181,16 @@ pub fn default_rules() -> Vec<DlpRule> {
 		.collect()
 }
 
-fn kind_name(kind: HitKind) -> &'static str {
+pub fn kind_name(kind: HitKind) -> &'static str {
 	match kind {
 		HitKind::Abn => "abn",
 		HitKind::Acn => "acn",
 		HitKind::Tfn => "tfn",
 		HitKind::Medicare => "medicare",
+		HitKind::Ihi => "ihi",
+		HitKind::Dva => "dva",
+		HitKind::Email => "email",
+		HitKind::PaymentCard => "payment-card",
 		HitKind::Crn => "crn",
 		HitKind::Passport => "passport",
 		HitKind::PassportMrz => "passport-mrz",
@@ -268,18 +284,9 @@ pub fn inspect(
 			token_key,
 		));
 	}
-	spans.sort_by_key(|span| (span.start, std::cmp::Reverse(span.end)));
-	let mut chosen: Vec<Span> = Vec::new();
-	for span in spans {
-		if span.end > span.start
-			&& chosen
-				.iter()
-				.any(|earlier| span.start < earlier.end && span.end > earlier.start)
-		{
-			continue;
-		}
-		chosen.push(span);
-	}
+	// Keep every finding for policy precedence and evidence. A broad allow
+	// match must never hide a narrower block/redact match over the same text.
+	let chosen = spans;
 	let action = chosen
 		.iter()
 		.map(|span| span.action)
@@ -405,7 +412,7 @@ fn tokenise(kind: HitKind, value: &str, key: &[u8]) -> String {
 	format!(
 		"TOK_{}_{}",
 		kind_name(kind).to_ascii_uppercase(),
-		hex8(&bytes[..4])
+		hex8(&bytes[..16])
 	)
 }
 
@@ -420,17 +427,33 @@ fn hex8(bytes: &[u8]) -> String {
 }
 
 fn apply_replacements(text: &str, spans: &[Span]) -> String {
-	let mut ordered: Vec<&Span> = spans
+	let mut ordered: Vec<Span> = spans
 		.iter()
-		.filter(|span| span.end > span.start && !span.replacement.is_empty())
+		.filter(|s| {
+			s.end > s.start
+				&& !s.replacement.is_empty()
+				&& text.is_char_boundary(s.start)
+				&& text.is_char_boundary(s.end)
+		})
+		.cloned()
 		.collect();
-	ordered.sort_by_key(|span| span.start);
+	ordered.sort_by_key(|s| (s.start, std::cmp::Reverse(s.end)));
+	let mut merged: Vec<Span> = Vec::new();
+	for span in ordered {
+		if let Some(last) = merged.last_mut()
+			&& span.start < last.end
+		{
+			last.end = last.end.max(span.end);
+			// Overlapping transformations cannot safely preserve either partial
+			// reveal or pseudonym, so redact the entire union.
+			last.replacement = "[redacted]".into();
+		} else {
+			merged.push(span);
+		}
+	}
 	let mut out = String::new();
 	let mut cursor = 0;
-	for span in ordered {
-		if span.start < cursor {
-			continue;
-		}
+	for span in merged {
 		out.push_str(&text[cursor..span.start]);
 		out.push_str(&span.replacement);
 		cursor = span.end;
@@ -512,5 +535,55 @@ mod tests {
 		let outcome = inspect(text, &Default::default(), &rules, &[], b"k");
 		assert_eq!(outcome.action, Action::Block);
 		assert!(outcome.output.is_empty());
+	}
+}
+
+#[cfg(test)]
+mod overlap_privacy_tests {
+	use super::*;
+	#[test]
+	fn overlapping_allow_never_hides_a_block() {
+		let mut rules = default_rules();
+		rules
+			.iter_mut()
+			.find(|r| r.kind == HitKind::Acn)
+			.unwrap()
+			.action = Action::Allow;
+		rules
+			.iter_mut()
+			.find(|r| r.kind == HitKind::Tfn)
+			.unwrap()
+			.action = Action::Block;
+		let result = inspect(
+			"ACN / TFN 123 456 780",
+			&Default::default(),
+			&rules,
+			&[],
+			b"test-key",
+		);
+		assert_eq!(result.action, Action::Block);
+		assert!(result.output.is_empty());
+		assert!(result.hits.iter().any(|h| h.kind == HitKind::Tfn));
+		assert!(
+			!serde_json::to_string(&result.hits)
+				.unwrap()
+				.contains("123 456 780")
+		);
+	}
+	#[test]
+	fn overlapping_redactions_cover_the_entire_span() {
+		let spans = vec![
+			span_from_slice("abcdefghij", 0, 5, HitKind::Tfn, Action::Redact, "", b"k"),
+			span_from_slice(
+				"abcdefghij",
+				3,
+				10,
+				HitKind::Medicare,
+				Action::Redact,
+				"",
+				b"k",
+			),
+		];
+		assert_eq!(apply_replacements("abcdefghij", &spans), "[redacted]");
 	}
 }

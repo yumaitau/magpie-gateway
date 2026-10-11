@@ -10,7 +10,7 @@ strategy.
 - ISM September 2026, including ISM-2159 for logging agentic tool
   invocations, external requests and outputs:
   https://www.cyber.gov.au/ism/2026-09
-- ISM-1988 and ISM-1985, searchable retention and protecting logs:
+- ISM-1988, ISM-1985 (access) and ISM-1815 (modification/deletion), searchable retention and protecting logs:
   https://www.cyber.gov.au/ism/2026-09/guidelines-for-security-assurance
 - Essential Eight maturity model FAQ, which still points at the
   November 2023 model:

@@ -3,6 +3,8 @@
 //! Telemetry, Presidio and audit sinks stay off unless settings name an endpoint.
 
 mod access;
+mod australia;
+mod native;
 mod ui;
 
 use std::collections::HashMap;
@@ -34,6 +36,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub struct Config {
+	/// Private, trusted Agentgateway admin endpoint. Empty disables the native console.
+	pub gateway_admin_url: String,
+	pub gateway_ui_dir: String,
 	/// Initial mode only; the portal persists subsequent administrator choices.
 	pub guardrail_mode: guardrail::Mode,
 	pub database_path: String,
@@ -96,6 +101,8 @@ struct IssuedCode {
 }
 
 struct Inner {
+	gateway_client: reqwest::Client,
+	gateway_write: tokio::sync::Mutex<()>,
 	store: Mutex<Store>,
 	codec: SessionCodec,
 	pending: Mutex<HashMap<String, PendingLogin>>,
@@ -142,9 +149,30 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 	if store.guardrail_mode()?.is_none() {
 		store.set_guardrail_mode(config.guardrail_mode, "deployment")?;
 	}
+	// New releases can add actions; the recovery Owner retains every action.
+	if let Some(mut access) = store.access_control()?
+		&& let Some(owner) = access.roles.iter_mut().find(|r| r.id == "owner")
+	{
+		let mut changed = false;
+		for (permission, _, _) in magpie::rbac::ACTIONS {
+			if !owner.permissions.contains(permission) {
+				owner.permissions.push(*permission);
+				changed = true;
+			}
+		}
+		if changed {
+			store.set_access_control(&access, "upgrade")?;
+		}
+	}
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
 		inner: Arc::new(Inner {
+			gateway_client: reqwest::Client::builder()
+				.redirect(reqwest::redirect::Policy::none())
+				.connect_timeout(Duration::from_secs(5))
+				.build()
+				.expect("gateway client"),
+			gateway_write: tokio::sync::Mutex::new(()),
 			store: Mutex::new(store),
 			codec,
 			pending: Mutex::new(HashMap::new()),
@@ -172,7 +200,8 @@ pub fn router(state: AppState) -> Router {
 		));
 	Router::new()
 		.merge(webhooks)
-		.route("/", get(async || Redirect::to("/dashboard")))
+		.merge(native::routes())
+		.route("/", get(native::home))
 		.route("/healthz", get(health))
 		.route("/login", get(login))
 		.route("/api/auth/start", get(auth_start))
@@ -200,6 +229,8 @@ pub fn router(state: AppState) -> Router {
 		.route("/providers", get(providers_page))
 		.route("/policies", get(policies_page).post(policies_post))
 		.route("/dlp", get(dlp_page).post(dlp_post))
+		.route("/dlp/rules", post(dlp_rule_post))
+		.route("/australia", get(australia::overview))
 		.route("/audit", get(audit_page))
 		.route("/audit.csv", get(audit_csv))
 		.route("/approvals", get(approvals_page).post(approvals_post))
@@ -554,7 +585,12 @@ fn finish_login(
 			"oidc login"
 		},
 	);
-	let mut response = Redirect::to("/dashboard").into_response();
+	let mut response = Redirect::to(if state.inner.config.gateway_admin_url.is_empty() {
+		"/dashboard"
+	} else {
+		"/"
+	})
+	.into_response();
 	let _ = headers;
 	response.headers_mut().insert(
 		header::SET_COOKIE,
@@ -1240,29 +1276,97 @@ async fn policies_post(
 }
 
 async fn dlp_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
-	let sample = "Example only. ABN 12 000 000 041 on an OFFICIAL: Sensitive note.";
-	let outcome = dlp::inspect(
-		sample,
-		&Default::default(),
-		&dlp::default_rules(),
-		&[],
-		b"portal",
-	);
+	let disabled = if require(&state, &headers, Permission::EditDlp).is_ok() {
+		""
+	} else {
+		"disabled"
+	};
+	let rules = load_rules(&state);
+	let mut rows = vec![];
+	for rule in &rules {
+		let kind = serde_json::to_value(rule.kind)
+			.unwrap()
+			.as_str()
+			.unwrap()
+			.to_string();
+		let mut options = String::new();
+		for action in [
+			dlp::Action::Allow,
+			dlp::Action::Log,
+			dlp::Action::Redact,
+			dlp::Action::Mask,
+			dlp::Action::Tokenise,
+			dlp::Action::Block,
+			dlp::Action::RequireApproval,
+		] {
+			let value = serde_json::to_value(action)
+				.unwrap()
+				.as_str()
+				.unwrap()
+				.to_string();
+			options.push_str(&format!(
+				"<option value=\"{}\" {}>{}</option>",
+				value,
+				if rule.action == action {
+					"selected"
+				} else {
+					""
+				},
+				action.as_str()
+			));
+		}
+		rows.push(vec![dlp::kind_name(rule.kind).into(), format!(r#"<form method="post" action="/dlp/rules"><input type="hidden" name="kind" value="{kind}"><label class="small" for="action-{kind}">Action for {kind}</label><select id="action-{kind}" name="action" {disabled}>{options}</select> <button type="submit" {disabled}>Save rule</button></form>"#)]);
+	}
 	let body = format!(
-		r#"<p>Hits below are redacted. The matched text is not shown back.</p>
-<h2>Example inspection</h2>
-<pre>{}</pre>
-<p>Action: {}</p>
-<form method="post" action="/dlp">
-<label for="text">Text to check</label>
-<textarea id="text" name="text" rows="4" required>{}</textarea>
-<button type="submit">Run DLP</button>
-</form>"#,
-		ui::esc(&outcome.output),
-		ui::esc(outcome.action.as_str()),
-		ui::esc(sample)
+		r#"<p>Australian identifiers are inspected locally in prompts and responses passing through Magpie guardrails. Each detector has its own action. Saved changes follow the approval setting and apply without a redeploy.</p>
+<p><a href="/settings">Manage log-only or enforcement mode</a> · <a href="/australia">Australian assurance and detector coverage</a></p>
+<p class="banner">Log-only records what the policy would do and sends traffic unchanged. Redact, mask, tokenise and block take effect in enforcement mode. This test always shows a sanitised preview.</p>
+<h2>Detector actions</h2>{}
+<p>Mask reveals the final two characters. Tokenise creates a keyed, non-reversible pseudonym. Public ABNs and ACNs can be set to allow where your organisation permits it.</p>
+{}
+<h2>Test Australian privacy controls</h2>
+<p>Use synthetic examples. Test text is not saved to the audit log or sent to an AI model. TFNs detected by context or a candidate checksum are not verified with the ATO.</p>
+<form method="post" action="/dlp"><label for="text">Text to check</label><textarea id="text" name="text" rows="4" required {disabled}></textarea><button type="submit" {disabled}>Run DLP</button></form>"#,
+		table(&["Detector", "Configured action"], &rows),
+		pending_html(&state)
 	);
-	page(&state, &headers, "/dlp", "DLP rules", body)
+	page(&state, &headers, "/dlp", "Australian privacy", body)
+}
+
+#[derive(Deserialize)]
+struct DlpRuleForm {
+	kind: dlp::HitKind,
+	action: dlp::Action,
+}
+
+async fn dlp_rule_post(
+	State(state): State<AppState>,
+	headers: HeaderMap,
+	Form(form): Form<DlpRuleForm>,
+) -> Response {
+	let session = match require(&state, &headers, Permission::EditDlp) {
+		Ok(s) => s,
+		Err(r) => return r,
+	};
+	let Some(mut rule) = load_rules(&state).into_iter().find(|r| r.kind == form.kind) else {
+		return StatusCode::BAD_REQUEST.into_response();
+	};
+	rule.action = form.action;
+	match save_revision(
+		&state,
+		"dlp_rule",
+		&rule.id,
+		&session.email,
+		json!(rule),
+		second_person(&state),
+	) {
+		Ok(_) => Redirect::to("/dlp").into_response(),
+		Err(_) => (
+			StatusCode::INTERNAL_SERVER_ERROR,
+			"The rule could not be saved.",
+		)
+			.into_response(),
+	}
 }
 
 #[derive(Deserialize)]
@@ -1283,17 +1387,24 @@ async fn dlp_post(
 		&Default::default(),
 		&load_rules(&state),
 		&[],
-		b"portal",
+		state.inner.config.session_secret.as_bytes(),
+	);
+	let preview = dlp::inspect(
+		&form.text,
+		&Default::default(),
+		&dlp::default_rules(),
+		&[],
+		state.inner.config.session_secret.as_bytes(),
 	);
 	page(
 		&state,
 		&headers,
 		"/dlp",
-		"DLP rules",
+		"Australian privacy",
 		format!(
-			"<p>Action: {}</p><pre>{}</pre><p>{} hit(s). Matched text is withheld.</p>",
+			"<p>Configured action: {}</p><h2>Sanitised preview</h2><pre>{}</pre><p>{} hit(s). Original values are withheld, including for allow and log rules.</p><p><a href=\"/dlp\">Back to Australian privacy controls</a></p>",
 			ui::esc(outcome.action.as_str()),
-			ui::esc(&outcome.output),
+			ui::esc(&preview.output),
 			outcome.hits.len()
 		),
 	)
@@ -2510,15 +2621,15 @@ fn load_rules(state: &AppState) -> Vec<DlpRule> {
 		.expect("db")
 		.list_documents("dlp_rule")
 		.unwrap_or_default();
-	let rules = docs
-		.iter()
-		.filter_map(|doc| serde_json::from_value(doc.body.clone()).ok())
-		.collect::<Vec<_>>();
-	if rules.is_empty() {
-		dlp::default_rules()
-	} else {
-		rules
+	let mut rules = dlp::default_rules();
+	for doc in docs.into_iter().filter(|doc| doc.active) {
+		if let Ok(rule) = serde_json::from_value::<DlpRule>(doc.body)
+			&& let Some(existing) = rules.iter_mut().find(|r| r.kind == rule.kind)
+		{
+			*existing = rule;
+		}
 	}
+	rules
 }
 
 fn load_approvals(state: &AppState) -> Vec<Approval> {
@@ -2867,7 +2978,9 @@ fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
 			format!("<tr>{cells}</tr>")
 		})
 		.collect::<String>();
-	format!("<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>")
+	format!(
+		"<div class=\"table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Data table\"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
+	)
 }
 
 fn rows_audit(events: &[AuditEvent]) -> Vec<Vec<String>> {

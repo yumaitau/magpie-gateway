@@ -76,6 +76,8 @@ async fn main() {
 		guardrail_mode.as_str()
 	);
 	let config = magpie_portal::Config {
+		gateway_ui_dir: env("MAGPIE_GATEWAY_UI_DIR").unwrap_or_default(),
+		gateway_admin_url: env("MAGPIE_GATEWAY_ADMIN_URL").unwrap_or_default(),
 		guardrail_mode,
 		database_path: database,
 		cookie_secure: env("MAGPIE_COOKIE_SECURE").as_deref() != Some("0"),

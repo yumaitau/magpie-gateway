@@ -21,7 +21,7 @@ async function signIn(page) {
   await page.getByLabel('Username').fill('admin');
   await page.getByLabel('Password').fill(process.env.MAGPIE_ADMIN_PASSWORD);
   await page.getByRole('button', { name: 'Sign in as administrator' }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/ui\/$/);
 }
 
 async function ask(request, content) {
@@ -42,7 +42,7 @@ async function setKillAgent(page, value) {
   await expect(page.locator('#kill_agent')).toHaveValue(value);
 }
 
-test('bare address opens login, then the dashboard for a signed-in user', async ({ page }) => {
+test('bare address opens login, then the native console for a signed-in user', async ({ page }) => {
   const response = await page.goto(base);
   expect(response.status()).toBe(200);
   await expect(page).toHaveURL(/\/login$/);
@@ -50,7 +50,7 @@ test('bare address opens login, then the dashboard for a signed-in user', async 
   await signIn(page);
   const signedIn = await page.goto(base);
   expect(signedIn.status()).toBe(200);
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/ui\/$/);
 });
 
 test('login page offers the administrator form and passes axe', async ({ page }) => {
@@ -69,7 +69,7 @@ test('a wrong password is refused', async ({ page }) => {
   await expect(page).not.toHaveURL(/\/dashboard$/);
 });
 
-for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/policies', '/dlp', '/audit', '/approvals', '/settings', '/access']) {
+for (const path of ['/dashboard', '/agents', '/catalogue', '/providers', '/policies', '/dlp', '/audit', '/approvals', '/settings', '/access', '/australia']) {
   test(`${path} loads for the administrator without example data and passes axe`, async ({ page }) => {
     await signIn(page);
     const response = await page.goto(`${base}${path}`);
@@ -146,4 +146,61 @@ test('the mode selector saves the current choice without a deployment', async ({
   await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
   await page.reload();
   await expect(page.getByLabel('Guardrail mode', { exact: true })).toHaveValue(mode);
+});
+
+
+const nativePages = [
+  ['/ui/', 'Gateway Overview'],
+  ['/ui/llm/models', 'LLM Models'],
+  ['/ui/llm/providers', 'LLM Providers'],
+  ['/ui/llm/policies', 'LLM Policies'],
+  ['/ui/llm/guardrails', 'LLM Guardrails'],
+  ['/ui/llm/keys', 'Virtual API Keys'],
+  ['/ui/llm/costs', 'LLM Costs'],
+  ['/ui/llm/analytics', 'Analytics'],
+  ['/ui/llm/logs', 'Logs'],
+  ['/ui/llm/client-setup', 'Client Setup'],
+  ['/ui/llm/playground', 'LLM Playground'],
+  ['/ui/mcp/get-started', 'Enable MCP'],
+  ['/ui/traffic/gateways', 'Traffic Gateways'],
+  ['/ui/traffic/routes', 'Traffic Routes'],
+  ['/ui/cel', 'CEL Playground'],
+];
+for (const [path, heading] of nativePages) {
+  test(`native console ${path} retains its upstream screen`, async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await signIn(page);
+    const response = await page.goto(`${base}${path}`);
+    expect(response.status()).toBe(200);
+    await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible();
+    await expect(page.locator('.brand')).toContainText('Magpie');
+    await expect(page.locator('.magpie-mode')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
+test('native management API requires a portal session', async ({ request }) => {
+  expect((await request.get(`${base}/api/config`)).status()).toBe(401);
+  expect((await request.post(`${base}/api/config`, { data: {} })).status()).toBe(401);
+});
+
+test('Australian test preview withholds original identifiers', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`${base}/dlp`);
+  await page.getByLabel('Text to check').fill('TFN 12345678; Medicare 2428778131; IHI 8003601240025671');
+  await page.getByRole('button', { name: 'Run DLP', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Sanitised preview' })).toBeVisible();
+  for (const value of ['12345678', '2428778131', '8003601240025671']) await expect(page.locator('main')).not.toContainText(value);
+  await expect(page.locator('main pre')).toContainText('[redacted]');
+});
+
+test('client setup uses the public origin and native UI works on a phone', async ({ page }) => {
+  await signIn(page);
+  await page.goto(`${base}/ui/llm/client-setup`);
+  await expect(page.locator('input').first()).toHaveValue(base.replace(/\/$/, ''));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${base}/ui/`);
+  await expect(page.getByRole('heading', { name: 'Gateway Overview', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

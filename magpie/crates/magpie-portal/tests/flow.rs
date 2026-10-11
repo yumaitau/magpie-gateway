@@ -16,6 +16,8 @@ use serde_json::json;
 
 fn config(break_glass: BreakGlassConfig, secure: bool) -> Config {
 	Config {
+		gateway_admin_url: String::new(),
+		gateway_ui_dir: String::new(),
 		guardrail_mode: Default::default(),
 		database_path: ":memory:".into(),
 		cookie_secure: secure,
@@ -1280,4 +1282,259 @@ async fn unassigned_users_are_registered_but_have_no_default_access() {
 		.await
 		.unwrap();
 	assert!(access.contains("alex.nguyen@example.gov.au"));
+}
+
+#[tokio::test]
+async fn native_console_protects_configuration_and_each_changed_action() {
+	use axum::routing::get;
+	use axum::{Json, Router};
+	let baseline = json!({"config":{"adminAddr":"localhost:15000"},"llm":{"models":[],"policies":{"apiKey":{"keys":[]}}}});
+	let fake_config = baseline.clone();
+	let upstream = Router::new()
+		.route(
+			"/api/config",
+			get(move || {
+				let c = fake_config.clone();
+				async move { Json(c) }
+			})
+			.post(|| async { Json(json!({"status":"success"})) }),
+		)
+		.route(
+			"/ui/",
+			get(|| async {
+				axum::response::Html(
+					"<html><head><title>agentgateway</title></head><body>Native console</body></html>",
+				)
+			}),
+		);
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let address = listener.local_addr().unwrap();
+	tokio::spawn(async move {
+		axum::serve(listener, upstream).await.unwrap();
+	});
+	let mut cfg = config(BreakGlassConfig::default(), false);
+	cfg.gateway_admin_url = format!("http://{address}");
+	let base = spawn_with(cfg).await;
+	let (anonymous, _) = client(&base);
+	assert_eq!(
+		anonymous
+			.get(format!("{base}/api/config"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+	assert_eq!(
+		anonymous
+			.get(format!("{base}/ui/"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let (admin, _) = client(&base);
+	let (user, _) = client(&base);
+	login_response(&admin, &base, "sam").await;
+	login_response(&user, &base, "alex").await;
+	assert_eq!(
+		user
+			.get(format!("{base}/api/config"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	let grant = [
+		("id", "native-model-editor"),
+		("name", "Native model editor"),
+		("permission.readGatewayConfig", "1"),
+		("permission.editGatewayModels", "1"),
+	];
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/roles"))
+			.form(&grant)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let group = [
+		("id", "native-team"),
+		("name", "Native team"),
+		("role.native-model-editor", "1"),
+		("member.example-user", "1"),
+	];
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/groups"))
+			.form(&group)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	assert_eq!(
+		user
+			.get(format!("{base}/api/config"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	let html = user
+		.get(format!("{base}/ui/"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(html.contains("Native console"));
+	assert!(html.contains("/assets/magpie/brand.js"));
+	let mut edited = baseline.clone();
+	edited["llm"]["models"] = json!([{"name":"example"}]);
+	assert_eq!(
+		user
+			.post(format!("{base}/api/config"))
+			.json(&edited)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	edited["llm"]["policies"]["apiKey"]["keys"] = json!([{"key":"must-not-be-written"}]);
+	assert_eq!(
+		user
+			.post(format!("{base}/api/config"))
+			.json(&edited)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/config"))
+			.header("Origin", "https://untrusted.example")
+			.json(&baseline)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	let mut exposed = baseline.clone();
+	exposed["config"]["adminAddr"] = json!("0.0.0.0:15000");
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/config"))
+			.json(&exposed)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/logs/delete"))
+			.json(&json!({}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::NOT_FOUND
+	);
+	let revoked = [
+		("id", "native-model-editor"),
+		("name", "Native model editor"),
+		("permission.editGatewayModels", "1"),
+	];
+	admin
+		.post(format!("{base}/access/roles"))
+		.form(&revoked)
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(
+		user
+			.get(format!("{base}/api/config"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+}
+
+#[tokio::test]
+async fn australian_dlp_rules_are_permissioned_and_partial_edits_preserve_other_detectors() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (auditor, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&auditor, &base, "alex").await;
+	admin
+		.post(format!("{base}/access/roles"))
+		.form(&[
+			("id", "policy-editor"),
+			("name", "Policy reader"),
+			("permission.readPolicies", "1"),
+		])
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(
+		auditor
+			.post(format!("{base}/dlp/rules"))
+			.form(&[("kind", "tfn"), ("action", "allow")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/dlp/rules"))
+			.form(&[("kind", "tfn"), ("action", "block")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let page = admin
+		.get(format!("{base}/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(page.contains("action-ihi"));
+	assert!(page.contains("action-medicare"));
+	let sample = "Medicare 2428 7781 3 1; IHI 8003601240025671; TFN 12345678";
+	let preview = admin
+		.post(format!("{base}/dlp"))
+		.form(&[("text", sample)])
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(preview.contains("Sanitised preview"));
+	for raw in ["2428 7781 3 1", "8003601240025671", "12345678"] {
+		assert!(!preview.contains(raw));
+	}
 }

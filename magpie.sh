@@ -337,6 +337,9 @@ config:
   adminAddr: localhost:15000
   readinessAddr: 0.0.0.0:15021
   statsAddr: localhost:15020
+  logging:
+    database:
+      url: /data/gateway/requests.sqlite
 gateways:
   default:
     port: 4000

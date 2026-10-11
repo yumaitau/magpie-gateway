@@ -19,8 +19,9 @@ proxy:
   enabled: true
   image: ghcr.io/agentgateway/agentgateway:v1.6.0
   imagePullPolicy: IfNotPresent
-  # agentgateway YAML. $MAGPIE_* and provider key names are expanded from
-  # the container environment. ./magpie.sh writes it.
+  # First-start baseline only. The native UI owns /data/gateway/config.yaml
+  # after initialisation; UI edits survive Helm upgrades and pod replacement.
+  # $MAGPIE_* and provider keys expand from the container environment.
   config: ""
   awsRegion: ap-southeast-2
   resources:

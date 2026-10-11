@@ -5,6 +5,56 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 pub const ACTIONS: &[(Permission, &str, &str)] = &[
+	(
+		Permission::ReadGatewayConfig,
+		"readGatewayConfig",
+		"Open native console and read gateway configuration (includes credentials)",
+	),
+	(
+		Permission::EditGatewayModels,
+		"editGatewayModels",
+		"Configure gateway models and their policies",
+	),
+	(
+		Permission::EditGatewayProviders,
+		"editGatewayProviders",
+		"Configure gateway providers",
+	),
+	(
+		Permission::EditGatewayKeys,
+		"editGatewayKeys",
+		"Manage gateway API keys",
+	),
+	(
+		Permission::EditGatewayPolicies,
+		"editGatewayPolicies",
+		"Configure gateway policies and guardrails",
+	),
+	(
+		Permission::EditGatewayMcp,
+		"editGatewayMcp",
+		"Configure MCP servers and policies",
+	),
+	(
+		Permission::EditGatewayTraffic,
+		"editGatewayTraffic",
+		"Configure gateway listeners and traffic routes",
+	),
+	(
+		Permission::EditGatewaySettings,
+		"editGatewaySettings",
+		"Configure gateway storage, observability and UI",
+	),
+	(
+		Permission::ReadGatewayLogs,
+		"readGatewayLogs",
+		"Read gateway request logs and analytics",
+	),
+	(
+		Permission::RunGatewayCel,
+		"runGatewayCel",
+		"Use the CEL playground",
+	),
 	(Permission::ReadDashboard, "readDashboard", "View dashboard"),
 	(
 		Permission::ReadCatalogue,

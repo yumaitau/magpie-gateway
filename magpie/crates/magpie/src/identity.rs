@@ -57,6 +57,16 @@ impl Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Permission {
+	ReadGatewayConfig,
+	EditGatewayModels,
+	EditGatewayProviders,
+	EditGatewayKeys,
+	EditGatewayPolicies,
+	EditGatewayMcp,
+	EditGatewayTraffic,
+	EditGatewaySettings,
+	ReadGatewayLogs,
+	RunGatewayCel,
 	ReadDashboard,
 	ReadCatalogue,
 	ReadAudit,

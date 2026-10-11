@@ -12,6 +12,10 @@ pub enum IdentifierKind {
 	Acn,
 	Tfn,
 	Medicare,
+	Ihi,
+	Dva,
+	Email,
+	PaymentCard,
 	Crn,
 	Passport,
 	PassportMrz,
@@ -98,6 +102,107 @@ pub fn medicare_valid(digits: &[u8]) -> bool {
 		.map(|(digit, weight)| *digit as i32 * weight)
 		.sum();
 	sum % 10 == digits[8] as i32
+}
+
+/// Candidate filter used by Bower. This is not a published ATO verification
+/// service and is deliberately labelled heuristic. A labelled TFN is still
+/// detected when it fails this filter. Repeated placeholder digits are excluded.
+fn tfn_candidate(digits: &[u8]) -> bool {
+	if !matches!(digits.len(), 8 | 9)
+		|| digits.iter().any(|d| *d > 9)
+		|| digits.iter().all(|d| *d == digits[0])
+	{
+		return false;
+	}
+	let weights = [1, 4, 3, 7, 5, 8, 6, 9, 10];
+	let offset = 9 - digits.len();
+	digits
+		.iter()
+		.zip(&weights[offset..])
+		.map(|(d, w)| u32::from(*d) * w)
+		.sum::<u32>()
+		% 11
+		== 0
+}
+
+/// ADHA IHI profile: 16 digits, 800360 prefix, Luhn check digit.
+/// https://implementer.digitalhealth.gov.au/resources/hi-service-ihi-lookup-test-cases
+pub fn ihi_valid(digits: &[u8]) -> bool {
+	digits.len() == 16 && digits.starts_with(&[8, 0, 0, 3, 6, 0]) && luhn(digits)
+}
+
+fn luhn(digits: &[u8]) -> bool {
+	if digits.is_empty() || digits.iter().any(|d| *d > 9) {
+		return false;
+	}
+	digits
+		.iter()
+		.rev()
+		.enumerate()
+		.map(|(i, d)| {
+			let n = u32::from(*d) * if i % 2 == 1 { 2 } else { 1 };
+			if n > 9 { n - 9 } else { n }
+		})
+		.sum::<u32>()
+		% 10
+		== 0
+}
+
+fn scan_additional(text: &str, hits: &mut Vec<AuHit>) {
+	for run in digit_runs(text) {
+		let digits: Vec<u8> = run.digits.bytes().map(|b| b - b'0').collect();
+		if ihi_valid(&digits) {
+			push_hit(
+				hits,
+				IdentifierKind::Ihi,
+				&run,
+				Confidence::Checksum,
+				"IHI: 800360 prefix, 16 digits and Luhn; does not prove issuance or ownership.",
+			);
+		} else if (13..=16).contains(&digits.len())
+			&& matches!(digits[0], 3..=6)
+			&& luhn(&digits)
+			&& !digits.iter().all(|d| *d == digits[0])
+		{
+			push_hit(
+				hits,
+				IdentifierKind::PaymentCard,
+				&run,
+				Confidence::Checksum,
+				"Payment card candidate: length, issuer prefix and Luhn; not account verification.",
+			);
+		}
+	}
+	static EMAIL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+	let email = EMAIL.get_or_init(|| {
+		regex::Regex::new(r"(?i)\b[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+\b").unwrap()
+	});
+	for m in email.find_iter(text) {
+		hits.push(AuHit {
+			kind: IdentifierKind::Email,
+			start: m.start(),
+			end: m.end(),
+			confidence: Confidence::Format,
+			note: "Email address shape; no identity verification.",
+		});
+	}
+	static DVA: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+	let dva = DVA.get_or_init(|| {
+		regex::Regex::new(
+			r"(?i)\b(?:DVA|veterans? affairs)(?:\s+(?:file|number|no|card))*[\s:#-]+([A-Z][A-Z0-9]{5,9})\b",
+		)
+		.unwrap()
+	});
+	for c in dva.captures_iter(text) {
+		let m = c.get(1).unwrap();
+		hits.push(AuHit {
+			kind: IdentifierKind::Dva,
+			start: m.start(),
+			end: m.end(),
+			confidence: Confidence::Labelled,
+			note: "Labelled DVA identifier candidate; no checksum or entitlement verification.",
+		});
+	}
 }
 
 /// ICAO Doc 9303 Part 3 check digit. Weights 7, 3, 1. Digits are themselves,
@@ -215,7 +320,7 @@ fn digit_runs(text: &str) -> Vec<Run> {
 			}
 			let separator = bytes[index] == b' ' || bytes[index] == b'-';
 			let next_digit = index + 1 < bytes.len() && bytes[index + 1].is_ascii_digit();
-			if separator && next_digit && !digits.is_empty() && digits.len() < 12 {
+			if separator && next_digit && !digits.is_empty() && digits.len() < 16 {
 				separated = true;
 				index += 1;
 				continue;
@@ -223,7 +328,7 @@ fn digit_runs(text: &str) -> Vec<Run> {
 			break;
 		}
 		let end = index;
-		if (6..=11).contains(&digits.len()) {
+		if (6..=16).contains(&digits.len()) {
 			runs.push(Run {
 				digits,
 				start,
@@ -302,10 +407,7 @@ pub fn scan(text: &str) -> Vec<AuHit> {
 				"ACN modified modulus 10, ASIC Datastream Appendix B",
 			);
 		}
-		if (digits.len() == 10 || digits.len() == 11)
-			&& medicare_valid(&digits)
-			&& contains_any(&around, &["medicare"])
-		{
+		if (digits.len() == 10 || digits.len() == 11) && medicare_valid(&digits) {
 			push_hit(
 				&mut hits,
 				IdentifierKind::Medicare,
@@ -314,13 +416,19 @@ pub fn scan(text: &str) -> Vec<AuHit> {
 				"Medicare check digit from the ADHA conformance profile, Appendix E",
 			);
 		}
-		if (digits.len() == 8 || digits.len() == 9) && contains_any(&around, &["tfn", "tax file"]) {
+		if (digits.len() == 8 || digits.len() == 9)
+			&& (contains_any(&around, &["tfn", "tax file"]) || tfn_candidate(&digits))
+		{
 			push_hit(
 				&mut hits,
 				IdentifierKind::Tfn,
 				&run,
-				Confidence::Format,
-				"TFN length only. The ATO does not publish the checksum.",
+				if contains_any(&around, &["tfn", "tax file"]) {
+					Confidence::Labelled
+				} else {
+					Confidence::Heuristic
+				},
+				"TFN candidate: labelled length or Bower-compatible mod-11 heuristic; not ATO verification.",
 			);
 		}
 		if digits.len() == 6
@@ -336,6 +444,7 @@ pub fn scan(text: &str) -> Vec<AuHit> {
 			);
 		}
 	}
+	scan_additional(text, &mut hits);
 	scan_crn(text, &mut hits);
 	scan_passport(text, &mut hits);
 	scan_mrz(text, &mut hits);
@@ -640,10 +749,14 @@ mod tests {
 		assert!(
 			hits
 				.iter()
-				.any(|hit| hit.kind == IdentifierKind::Tfn && hit.confidence == Confidence::Format)
+				.any(|hit| hit.kind == IdentifierKind::Tfn && hit.confidence == Confidence::Labelled)
 		);
 		assert!(hits.iter().any(|hit| hit.kind == IdentifierKind::Bsb));
-		assert!(hits.iter().any(|hit| hit.note.contains("does not publish")));
+		assert!(
+			hits
+				.iter()
+				.any(|hit| hit.note.contains("not ATO verification"))
+		);
 	}
 
 	#[test]
@@ -685,5 +798,72 @@ mod tests {
 				.iter()
 				.any(|row| row.code == "VIC" && row.format.contains("nine"))
 		);
+	}
+}
+
+#[cfg(test)]
+mod australian_privacy_tests {
+	use super::*;
+	#[test]
+	fn healthcare_identifiers_detect_without_labels_and_reject_bad_checksums() {
+		assert!(
+			scan("2428778131")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Medicare)
+		);
+		assert!(
+			!scan("2428778141")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Medicare)
+		);
+		assert!(
+			scan("8003601240025671")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Ihi)
+		);
+		assert!(
+			scan("8003 6012 4002 5671")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Ihi)
+		);
+		assert!(
+			!scan("8003601240025672")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Ihi)
+		);
+		assert!(
+			!scan("80036012400256710")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Ihi)
+		);
+	}
+	#[test]
+	fn tfn_detection_is_a_candidate_check_and_labels_protect_invalid_numbers() {
+		assert!(
+			scan("TFN 12345678")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Tfn && h.confidence == Confidence::Labelled)
+		);
+		assert!(
+			scan("123456782")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Tfn && h.confidence == Confidence::Heuristic)
+		);
+		assert!(
+			!scan("000000000")
+				.iter()
+				.any(|h| h.kind == IdentifierKind::Tfn)
+		);
+	}
+	#[test]
+	fn additional_detectors_cover_synthetic_contact_financial_and_veteran_data() {
+		let hits = scan("Contact alex@example.test; card 4111 1111 1111 1111; DVA N123456A");
+		for kind in [
+			IdentifierKind::Email,
+			IdentifierKind::PaymentCard,
+			IdentifierKind::Dva,
+		] {
+			assert!(hits.iter().any(|h| h.kind == kind), "{kind:?}");
+		}
 	}
 }

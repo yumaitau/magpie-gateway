@@ -32,6 +32,27 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.proxy.enabled }}
+      initContainers:
+        - name: gateway-config
+          image: {{ .Values.portal.image | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              mkdir -p /data/gateway
+              if [ ! -e /data/gateway/config.yaml ]; then
+                cp /config/config.yaml /data/gateway/config.yaml.tmp
+                mv /data/gateway/config.yaml.tmp /data/gateway/config.yaml
+              fi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: proxy-config
+              mountPath: /config
+              readOnly: true
+      {{- end }}
       containers:
         - name: portal
           image: {{ .Values.portal.image | quote }}
@@ -42,6 +63,10 @@ spec:
             - name: portal
               containerPort: 8088
           env:
+            {{- if .Values.proxy.enabled }}
+            - name: MAGPIE_GATEWAY_ADMIN_URL
+              value: http://127.0.0.1:15000
+            {{- end }}
             - name: MAGPIE_DATABASE_URL
               value: /data/magpie.sqlite
             - name: MAGPIE_LISTEN
@@ -76,7 +101,8 @@ spec:
         - name: proxy
           image: {{ .Values.proxy.image | quote }}
           imagePullPolicy: {{ .Values.proxy.imagePullPolicy }}
-          args: ["--file", "/config/config.yaml"]
+          args: ["--file", "/data/gateway/config.yaml"]
+          workingDir: /data/gateway
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
@@ -93,9 +119,9 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-proxy
           volumeMounts:
-            - name: proxy-config
-              mountPath: /config
-              readOnly: true
+            - name: data
+              mountPath: /data/gateway
+              subPath: gateway
             - name: proxy-tmp
               mountPath: /tmp
           readinessProbe:

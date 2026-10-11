@@ -26,6 +26,7 @@ export function gatewayEndpoint(port: number, path = '', scheme = currentWindowS
 export function llmPlaygroundEndpoint(
 	config: GatewayConfig | null | undefined
 ): PlaygroundEndpoint {
+	if (import.meta.env.VITE_MAGPIE === 'true') return { baseUrl: '', sameOrigin: true };
 	return playgroundEndpoint(
 		config,
 		llmGatewayRefs(config),
@@ -39,6 +40,7 @@ export function llmPlaygroundEndpoint(
 export function mcpPlaygroundEndpoint(
 	config: GatewayConfig | null | undefined
 ): PlaygroundEndpoint {
+	if (import.meta.env.VITE_MAGPIE === 'true') return { baseUrl: '/mcp', sameOrigin: true };
 	return playgroundEndpoint(
 		config,
 		mcpGatewayRefs(config),
@@ -50,6 +52,7 @@ export function mcpPlaygroundEndpoint(
 }
 
 export function llmGatewayOrigin(config: GatewayConfig | null | undefined) {
+	if (import.meta.env.VITE_MAGPIE === 'true') return window.location.origin;
 	const refs = llmGatewayRefs(config);
 	const uiGateways = uiGatewayRefs(config);
 	// When the UI is served from the same gateway, the browser's origin is the externally reachable
