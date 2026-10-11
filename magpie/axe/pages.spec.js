@@ -10,7 +10,6 @@ const pages = [
   ['/policies', 'policies'],
   ['/dlp', 'dlp'],
   ['/audit', 'audit'],
-  ['/alerts', 'alerts'],
   ['/approvals', 'approvals'],
   ['/settings', 'settings'],
   ['/australia', 'australia'],
@@ -37,3 +36,10 @@ for (const [path, name] of pages) {
     }
   });
 }
+
+// Alert destinations require an authenticated settings administrator. Their
+// accessibility coverage lives in native/accounts.spec.js, which signs in.
+test('anonymous demo does not expose alert destinations', async ({ page }) => {
+  const response = await page.goto('/alerts');
+  expect(response.status()).toBe(403);
+});
