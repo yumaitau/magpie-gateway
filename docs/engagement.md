@@ -123,9 +123,19 @@ file named by `INGRESS_ANNOTATIONS_FILE`. Avoid changing shared listener,
 network, or load balancer settings through an application's annotations.
 
 When migrating, initially keep `DEDICATED_EDGE_ENABLED=true`, apply,
-and test the new hostname with `check` and `uitest`. Then switch it to
-`false` and apply again to remove Magpie's dedicated CloudFront, VPC
-origin, ALB, and target groups. Existing standalone deployments retain
+and test the new hostname with `check` and `uitest`. Set it to `false`,
+then remove only the old dedicated bindings before the final apply:
+
+```bash
+./magpie.sh kubectl CLIENT delete targetgroupbinding magpie-portal magpie-proxy
+./magpie.sh up CLIENT
+```
+
+The shared ingress's controller-created bindings have different names;
+leave those in place. Removing the old bindings lets the controller
+release their pod security-group rules before Terraform deletes the
+old ALB security group. The final apply removes Magpie's dedicated
+CloudFront, VPC origin, ALB, and target groups. Existing standalone deployments retain
 their resource identities. Update any Entra redirect URI to
 `https://HOST/api/auth/callback`, and regenerate client configuration
 with `connect`/`use` before retiring the old endpoint.
