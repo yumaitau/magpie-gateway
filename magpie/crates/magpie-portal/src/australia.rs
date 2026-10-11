@@ -7,14 +7,15 @@ pub(super) async fn overview(State(state): State<AppState>, headers: HeaderMap) 
 	let redact_count = rules
 		.iter()
 		.filter(|r| {
-			matches!(
-				r.action,
-				dlp::Action::Redact
-					| dlp::Action::Mask
-					| dlp::Action::Tokenise
-					| dlp::Action::Block
-					| dlp::Action::RequireApproval
-			)
+			r.enabled
+				&& matches!(
+					r.action,
+					dlp::Action::Redact
+						| dlp::Action::Mask
+						| dlp::Action::Tokenise
+						| dlp::Action::Block
+						| dlp::Action::RequireApproval
+				)
 		})
 		.count();
 	let posture = if settings.guardrail_mode == guardrail::Mode::LogOnly {
@@ -43,7 +44,7 @@ pub(super) async fn overview(State(state): State<AppState>, headers: HeaderMap) 
 		r#"<p>Australian privacy and protective security controls, with their current operating state and the evidence your organisation still needs.</p>
 <p class="banner" role="status">{}</p>
 <p><strong>{} of {} detector rules</strong> have a protective action configured. Sovereign mode: <strong>{}</strong>. Identity provider: <strong>{}</strong>.</p>
-<p><a href="/dlp">Configure Australian privacy</a> · <a href="/settings">Enforcement and residency settings</a> · <a href="/audit">Review decision evidence</a></p>
+<p><a href="/controls">Current controls and how to change them</a> · <a href="/dlp">Configure Australian privacy</a> · <a href="/settings">Enforcement and residency settings</a> · <a href="/audit">Review decision evidence</a></p>
 <h2>Australian detection coverage</h2>{}
 <h2>Control alignment</h2><p>These are interpretive mappings to support an assessment. They are not certification, legal advice or a claim that the deployment meets every requirement. PSPF obligations apply according to the entity and its contracts; they are not universal obligations for every Australian business.</p>{}
 <h2>Trial and rollout</h2><ol><li>Use synthetic test cases to confirm detector coverage and false positives.</li><li>Run a log-only trial with an approved cohort and monitor would-action findings. Sensitive data still reaches the configured destination in this mode.</li><li>Set actions per detector, review approvals and configure access groups.</li><li>Switch to enforcement in Settings, then verify requests and responses at each connected route.</li><li>Retain test evidence and review privacy, hosting, access and incident procedures with the organisation's privacy and security owners.</li></ol>

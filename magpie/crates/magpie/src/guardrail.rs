@@ -434,6 +434,7 @@ mod tests {
 			let rules = vec![DlpRule {
 				id: "abn".into(),
 				kind: dlp::HitKind::Abn,
+				enabled: true,
 				action,
 			}];
 			let policy = PolicySet {

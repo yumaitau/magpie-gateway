@@ -17,6 +17,10 @@ pub struct Nav {
 
 pub const NAV: &[Nav] = &[
 	Nav {
+		path: "/controls",
+		label: "Controls",
+	},
+	Nav {
 		path: "/alerts",
 		label: "Alerts",
 	},

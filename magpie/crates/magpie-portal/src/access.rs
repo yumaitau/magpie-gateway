@@ -56,7 +56,7 @@ pub(crate) fn role_names(state: &AppState, session: &SessionRecord) -> Vec<Strin
 pub(crate) fn page_permission(path: &str) -> Permission {
 	match path {
 		"/dashboard" => Permission::ReadDashboard,
-		"/policies" | "/dlp" | "/approvals" | "/australia" => Permission::ReadPolicies,
+		"/controls" | "/policies" | "/dlp" | "/approvals" | "/australia" => Permission::ReadPolicies,
 		"/audit" => Permission::ReadAudit,
 		"/alerts" => Permission::ManageSettings,
 		"/settings" => Permission::ReadSettings,

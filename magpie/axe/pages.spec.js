@@ -4,6 +4,7 @@ const AxeBuilder = require('@axe-core/playwright').default;
 const pages = [
   ['/login', 'login'],
   ['/dashboard', 'dashboard'],
+  ['/controls', 'controls'],
   ['/agents', 'agents'],
   ['/catalogue', 'catalogue'],
   ['/providers', 'providers'],

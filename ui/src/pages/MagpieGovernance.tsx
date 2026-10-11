@@ -14,6 +14,7 @@ const pages = new Set([
 	'policies',
 	'dlp',
 	'australia',
+	'controls',
 	'audit',
 	'approvals',
 	'settings',

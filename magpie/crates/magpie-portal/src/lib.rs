@@ -6,6 +6,7 @@ mod access;
 mod accounts;
 pub mod alerts;
 mod australia;
+mod controls;
 mod native;
 mod ui;
 
@@ -260,6 +261,7 @@ pub fn router(state: AppState) -> Router {
 		.route("/dlp", get(dlp_page).post(dlp_post))
 		.route("/dlp/rules", post(dlp_rule_post))
 		.route("/australia", get(australia::overview))
+		.route("/controls", get(controls::overview))
 		.route("/alerts", get(alerts::page_get).post(alerts::post))
 		.route("/audit", get(audit_page))
 		.route("/audit.csv", get(audit_csv))
@@ -1347,13 +1349,23 @@ async fn policies_post(
 	)
 }
 
-async fn dlp_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct DlpPageQuery {
+	saved: Option<String>,
+}
+
+async fn dlp_page(
+	State(state): State<AppState>,
+	headers: HeaderMap,
+	Query(query): Query<DlpPageQuery>,
+) -> Response {
 	let disabled = if require(&state, &headers, Permission::EditDlp).is_ok() {
 		""
 	} else {
 		"disabled"
 	};
 	let rules = load_rules(&state);
+	let mode = load_settings(&state).guardrail_mode;
 	let mut rows = vec![];
 	for rule in &rules {
 		let kind = serde_json::to_value(rule.kind)
@@ -1387,28 +1399,60 @@ async fn dlp_page(State(state): State<AppState>, headers: HeaderMap) -> Response
 				action.as_str()
 			));
 		}
-		rows.push(vec![dlp::kind_name(rule.kind).into(), format!(r#"<form method="post" action="/dlp/rules"><input type="hidden" name="kind" value="{kind}"><label class="small" for="action-{kind}">Action for {kind}</label><select id="action-{kind}" name="action" {disabled}>{options}</select> <button type="submit" {disabled}>Save rule</button></form>"#)]);
+		let effective = if !rule.enabled {
+			"Off — no findings or actions".to_string()
+		} else if mode == guardrail::Mode::LogOnly {
+			format!("Observe only · would {}", rule.action.as_str())
+		} else {
+			format!("On · {}", rule.action.as_str())
+		};
+		let operation = if rule.enabled { "disable" } else { "enable" };
+		let operation_label = if rule.enabled {
+			"Disable detector"
+		} else {
+			"Enable detector"
+		};
+		rows.push(vec![dlp::kind_name(rule.kind).into(), effective, format!(r#"<form method="post" action="/dlp/rules"><input type="hidden" name="kind" value="{kind}"><label class="small" for="action-{kind}">Action for {kind}</label><select id="action-{kind}" name="action" {disabled}>{options}</select> <button type="submit" name="operation" value="save" {disabled}>Save action</button> <button type="submit" name="operation" value="{operation}" {disabled}>{operation_label}</button><details><summary>More options</summary><button type="submit" name="operation" value="restore" {disabled}>Restore default</button></details></form>"#)]);
 	}
 	let body = format!(
 		r#"<p>Australian identifiers are inspected locally in prompts and responses passing through Magpie guardrails. Each detector has its own action. Saved changes follow the approval setting and apply without a redeploy.</p>
 <p><a href="/settings">Manage log-only or enforcement mode</a> · <a href="/australia">Australian assurance and detector coverage</a></p>
 <p class="banner">Log-only records what the policy would do and sends traffic unchanged. Redact, mask, tokenise and block take effect in enforcement mode. This test always shows a sanitised preview.</p>
+<p><a href="/controls">View all controls and framework coverage</a></p>
+<p>Disable removes this detector’s findings and actions. Allow still detects and records findings. Restore default enables the detector and resets its action. Changes may need a different person’s approval; the table always shows the active revision. Marking and caveat detection settings do not disable built-in classification routing. Disabling Presidio also stops requests to its analyser.</p>
 <h2>Detector actions</h2>{}
 <p>Mask reveals the final two characters. Tokenise creates a keyed, non-reversible pseudonym. Public ABNs and ACNs can be set to allow where your organisation permits it.</p>
-{}
+<section id="pending-changes" aria-label="Change approvals">{}</section>
 <h2>Test Australian privacy controls</h2>
 <p>Use synthetic examples. Test text is not saved to the audit log or sent to an AI model. TFNs detected by context or a candidate checksum are not verified with the ATO.</p>
 <form method="post" action="/dlp"><label for="text">Text to check</label><textarea id="text" name="text" rows="4" required {disabled}></textarea><button type="submit" {disabled}>Run DLP</button></form>"#,
-		table(&["Detector", "Configured action"], &rows),
+		table(&["Detector", "Effective state", "Change or disable"], &rows),
 		pending_html(&state)
 	);
-	page(&state, &headers, "/dlp", "Australian privacy", body)
+	let notice = match query.saved.as_deref() {
+		Some("pending") => {
+			"<p role=\"status\"><strong>Change saved for approval.</strong> The active rule has not changed. A different authorised person must approve it under Pending changes below.</p>"
+		},
+		Some("active") => {
+			"<p role=\"status\"><strong>Change saved and active.</strong> The table shows the current rule.</p>"
+		},
+		_ => "",
+	};
+	page(
+		&state,
+		&headers,
+		"/dlp",
+		"Australian privacy",
+		format!("{notice}{body}"),
+	)
 }
 
 #[derive(Deserialize)]
 struct DlpRuleForm {
 	kind: dlp::HitKind,
 	action: dlp::Action,
+	enabled: Option<bool>,
+	operation: Option<String>,
 }
 
 async fn dlp_rule_post(
@@ -1423,7 +1467,25 @@ async fn dlp_rule_post(
 	let Some(mut rule) = load_rules(&state).into_iter().find(|r| r.kind == form.kind) else {
 		return StatusCode::BAD_REQUEST.into_response();
 	};
-	rule.action = form.action;
+	match form.operation.as_deref() {
+		Some("restore") => {
+			let default = dlp::default_rules()
+				.into_iter()
+				.find(|r| r.kind == form.kind)
+				.unwrap();
+			rule.action = default.action;
+			rule.enabled = default.enabled;
+		},
+		Some("disable") => rule.enabled = false,
+		Some("enable") => rule.enabled = true,
+		None | Some("save") => {
+			rule.action = form.action;
+			if let Some(enabled) = form.enabled {
+				rule.enabled = enabled;
+			}
+		},
+		_ => return StatusCode::BAD_REQUEST.into_response(),
+	}
 	match save_revision(
 		&state,
 		"dlp_rule",
@@ -1432,7 +1494,33 @@ async fn dlp_rule_post(
 		json!(rule),
 		second_person(&state),
 	) {
-		Ok(_) => Redirect::to("/dlp").into_response(),
+		Ok(status) => {
+			let pending = status == magpie::change::RevisionStatus::Pending;
+			let _ = record_audit(
+				&state,
+				"policy",
+				&session.email,
+				"",
+				"",
+				"",
+				"log",
+				&format!(
+					"DLP {} change {}",
+					dlp::kind_name(rule.kind),
+					if pending {
+						"pending approval"
+					} else {
+						"active"
+					}
+				),
+			);
+			Redirect::to(if pending {
+				"/dlp?saved=pending"
+			} else {
+				"/dlp?saved=active"
+			})
+			.into_response()
+		},
 		Err(_) => (
 			StatusCode::INTERNAL_SERVER_ERROR,
 			"The rule could not be saved.",
@@ -2281,7 +2369,10 @@ async fn run_decision(
 	arguments: Option<&Value>,
 ) -> magpie::guardrail::Outcome {
 	let settings = load_settings(state);
-	let presidio = if settings.presidio_analyzer_url.is_empty() {
+	let rules = load_rules(state);
+	let presidio = if settings.presidio_analyzer_url.is_empty()
+		|| !dlp::detector_enabled(&rules, dlp::HitKind::Presidio)
+	{
 		Vec::new()
 	} else {
 		match fetch_presidio(&settings.presidio_analyzer_url, text).await {
@@ -2302,7 +2393,6 @@ async fn run_decision(
 			},
 		}
 	};
-	let rules = load_rules(state);
 	let approvals = load_approvals(state);
 	let kill = load_kill(state);
 	let metadata = metadata_from(headers);

@@ -502,7 +502,8 @@ const essentialPaths = new Set([
 	'/governance/dashboard',
 	'/governance/approvals',
 	'/governance/audit',
-	'/governance/alerts'
+	'/governance/alerts',
+	'/governance/controls'
 ]);
 
 function Navigation(props: {

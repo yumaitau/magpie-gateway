@@ -48,3 +48,5 @@ model naming and upstream routing live in a disclosure, expanded when editing an
 existing model. Configuring a model does not imply its connection has been tested.
 
 Setup uses an API-key field by default, with credential sources under Advanced credentials. Connection success requires an actual model response. The checklist remembers browser-local model tests and explicitly confirmed app connections, and collapses once both are complete. Alerts is an essential navigation item for administrators; destinations start disabled, with SMTP and authentication settings under a disclosure.
+
+Controls is an essential navigation item for policy readers. It shows effective enforcement, plain-language framework names and direct edit paths. Essential Eight strategy details and framework sources use disclosures. Detector actions distinguish disabled rules from allow/log and show pending approval separately from the active state.

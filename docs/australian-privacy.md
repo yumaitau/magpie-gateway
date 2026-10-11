@@ -1,7 +1,11 @@
 # Australian privacy and assurance
 
 Magpie uses the native Agentgateway console for connections, providers, models,
-MCP, traffic, keys, logs and playgrounds. **Magpie Governance → Australian privacy**
+MCP, traffic, keys, logs and playgrounds. **Controls** in the main navigation
+shows effective mode, privacy controls, ISM support and all eight Essential Eight
+strategies, with links to their settings or an external owner. It distinguishes
+built-in controls, observe-only rules and controls outside Magpie.
+**Magpie Governance → Australian privacy**
 controls local detector actions. **Australian assurance** shows current trial /
 enforcement status and interprets the product's contribution to Australian
 privacy and protective security requirements. These are assessment aids, not
@@ -41,7 +45,14 @@ block and require approval. HMAC pseudonyms use a 128-bit digest prefix and a
 server-held key; they remain potentially linkable personal information. No
 unkeyed TFN hash option is offered. Saving a detector rule requires `editDlp` and
 uses the existing second-person approval setting. Unedited and newly added
-detectors retain their defaults. The preview always sanitises identifiers,
+detectors retain their defaults. **Disable detector** suppresses its findings and
+actions; **Enable detector** preserves its configured action. **More options →
+Restore default** enables it and restores the default action. All three use the
+same approval flow as action edits; pending changes do not alter the active rule.
+Existing saved rules without an `enabled` field remain enabled. Disabling Presidio
+also stops outbound analysis requests. Disabling marking/caveat findings does not
+disable the independent classification routing checks. Other enabled detectors can
+still act on overlapping text. The preview always sanitises identifiers,
 even if the configured action is allow/log, and is neither persisted nor sent
 to a model.
 

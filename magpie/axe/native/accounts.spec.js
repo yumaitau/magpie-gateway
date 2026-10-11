@@ -9,7 +9,7 @@ async function login(page,username='admin',password=adminPassword){await page.go
 
 test('all governance screens stay in the native shell and pass accessibility checks',async({page})=>{
  await login(page);
- for(const path of ['dashboard','alerts','agents','catalogue','providers','policies','dlp','audit','approvals','settings','access','australia']){
+ for(const path of ['controls','dashboard','alerts','agents','catalogue','providers','policies','dlp','audit','approvals','settings','access','australia']){
   await page.goto(`${base}/${path}`);await expect(page).toHaveURL(`${base}/ui/governance/${path}`);await expect(page.locator('.magpie-governance')).not.toBeEmpty();await expect(page.locator('.app-shell')).toHaveCount(1);await expect(page.locator('.shell')).toHaveCount(0);
   const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
  }
@@ -68,4 +68,31 @@ test('home has no artwork banner and alert destinations save without exposing se
  await destination.locator('summary').first().click();
  await destination.getByRole('button',{name:'Delete destination',exact:true}).click();
  await expect(page.getByText('No destinations yet. Add Slack, Teams, a webhook or email below.')).toBeVisible();
+});
+
+
+test('controls explain effective coverage and disabling creates a pending revision',async({page})=>{
+ await login(page);
+ await page.goto(`${base}/ui/governance/settings`);
+ await page.getByLabel('Guardrail mode',{exact:true}).selectOption('log-only');
+ await page.getByRole('button',{name:'Apply mode',exact:true}).click();
+ await expect(page.locator('.magpie-governance')).toHaveAttribute('aria-busy','false');
+ await page.goto(`${base}/ui/governance/controls`);
+ await expect(page.getByRole('heading',{name:'Gateway mode: Observe only'})).toBeVisible();
+ await page.getByText('See all eight strategies and their owners',{exact:true}).click();
+ await expect(page.getByRole('rowheader',{name:'Regular backups',exact:true})).toBeVisible();
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.setViewportSize({width:1440,height:900});
+ if(process.env.MAGPIE_SCREENSHOTS) await page.screenshot({path:`${process.env.MAGPIE_SCREENSHOTS}/controls.png`,fullPage:true});
+ await page.getByRole('link',{name:'Edit, disable or restore detectors',exact:true}).first().click();
+ const row=page.getByRole('row').filter({has:page.getByRole('cell',{name:'email',exact:true})});
+ await row.getByRole('button',{name:'Disable detector',exact:true}).click();
+ await expect(page.getByText('Change saved for approval.',{exact:true})).toBeVisible();
+ await expect(row).toContainText('Observe only');
+ await expect(page.locator('section[aria-label="Change approvals"]')).toContainText('default-email');
+ await expect(page.locator('section[aria-label="Change approvals"]')).toContainText('enabled');
 });

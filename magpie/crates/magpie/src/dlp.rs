@@ -107,6 +107,19 @@ pub struct DlpRule {
 	pub id: String,
 	pub kind: HitKind,
 	pub action: Action,
+	#[serde(default = "enabled_by_default")]
+	pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+	true
+}
+
+pub fn detector_enabled(rules: &[DlpRule], kind: HitKind) -> bool {
+	rules
+		.iter()
+		.find(|rule| rule.kind == kind)
+		.is_none_or(|rule| rule.enabled)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -165,17 +178,20 @@ pub fn default_rules() -> Vec<DlpRule> {
 			id: format!("default-{}", kind_name(kind)),
 			kind,
 			action: Action::Redact,
+			enabled: true,
 		})
 		.chain([
 			DlpRule {
 				id: "default-marking".to_string(),
 				kind: HitKind::Marking,
 				action: Action::Log,
+				enabled: true,
 			},
 			DlpRule {
 				id: "default-caveat".to_string(),
 				kind: HitKind::Caveat,
 				action: Action::Log,
+				enabled: true,
 			},
 		])
 		.collect()
@@ -286,7 +302,10 @@ pub fn inspect(
 	}
 	// Keep every finding for policy precedence and evidence. A broad allow
 	// match must never hide a narrower block/redact match over the same text.
-	let chosen = spans;
+	let chosen: Vec<_> = spans
+		.into_iter()
+		.filter(|span| detector_enabled(&rules, span.kind))
+		.collect();
 	let action = chosen
 		.iter()
 		.map(|span| span.action)
@@ -465,6 +484,57 @@ fn apply_replacements(text: &str, spans: &[Span]) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn old_rules_remain_enabled_and_disabled_rules_produce_no_findings() {
+		let legacy: DlpRule = serde_json::from_value(
+			serde_json::json!({"id":"default-email","kind":"email","action":"redact"}),
+		)
+		.unwrap();
+		assert!(legacy.enabled);
+		let text = "Contact jane@example.com";
+		let mut rules = default_rules();
+		rules
+			.iter_mut()
+			.find(|r| r.kind == HitKind::Email)
+			.unwrap()
+			.enabled = false;
+		let outcome = inspect(text, &Default::default(), &rules, &[], b"key");
+		assert_eq!(outcome.output, text);
+		assert!(outcome.hits.is_empty());
+		assert_eq!(outcome.action, Action::Allow);
+		rules
+			.iter_mut()
+			.find(|r| r.kind == HitKind::Email)
+			.unwrap()
+			.enabled = true;
+		assert!(
+			!inspect(text, &Default::default(), &rules, &[], b"key")
+				.output
+				.contains("jane@example.com")
+		);
+	}
+
+	#[test]
+	fn disabling_marking_findings_keeps_classification_routing() {
+		let mut rules = default_rules();
+		for rule in &mut rules {
+			rule.enabled = false;
+		}
+		let outcome = inspect("SECRET", &Default::default(), &rules, &[], b"key");
+		assert!(outcome.hits.is_empty());
+		assert_eq!(outcome.highest_marking, Some(Marking::Secret));
+		assert!(
+			!crate::sovereignty::check_route(
+				outcome.highest_marking,
+				"au",
+				"approved",
+				&["approved".into()],
+				false
+			)
+			.allowed
+		);
+	}
 
 	#[test]
 	fn redacts_abn_and_keeps_the_raw_value_out_of_the_hit() {

@@ -1955,3 +1955,222 @@ async fn alerts_require_settings_permission_and_never_render_saved_secrets() {
 	assert!(html.contains("cancelled"));
 	assert!(html.contains("No destinations yet"));
 }
+
+#[tokio::test]
+async fn detector_disable_and_restore_require_approval_and_preserve_other_rules() {
+	let mut cfg = config(BreakGlassConfig::default(), false);
+	cfg.guardrail_mode = magpie::guardrail::Mode::LogOnly;
+	let base = spawn_with(cfg).await;
+	let (admin, _) = client(&base);
+	let (approver, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&approver, &base, "alex").await;
+	let overview = admin
+		.get(format!("{base}/controls"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(overview.contains("Gateway mode: Observe only"));
+	assert!(overview.contains("Outside Magpie"));
+	for (operation, expected) in [
+		("disable", "Off — no findings or actions"),
+		("restore", "Observe only · would redact"),
+	] {
+		let response = admin
+			.post(format!("{base}/dlp/rules"))
+			.form(&[
+				("kind", "email"),
+				("action", "block"),
+				("operation", operation),
+			])
+			.send()
+			.await
+			.unwrap();
+		assert_eq!(response.status(), StatusCode::SEE_OTHER);
+		assert_eq!(response.headers()[LOCATION], "/dlp?saved=pending");
+		let page = admin
+			.get(format!("{base}/dlp"))
+			.send()
+			.await
+			.unwrap()
+			.text()
+			.await
+			.unwrap();
+		let row = page
+			.split("<td>email</td>")
+			.nth(1)
+			.unwrap()
+			.split("</tr>")
+			.next()
+			.unwrap();
+		if operation == "disable" {
+			assert!(row.contains("Observe only · would redact"));
+		} else {
+			assert!(row.contains("Off — no findings or actions"));
+		}
+		let id = page
+			.split("/revisions/")
+			.nth(1)
+			.unwrap()
+			.split('/')
+			.next()
+			.unwrap();
+		assert_eq!(
+			admin
+				.post(format!("{base}/revisions/{id}/approve"))
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::FORBIDDEN
+		);
+		assert_eq!(
+			approver
+				.post(format!("{base}/revisions/{id}/approve"))
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::SEE_OTHER
+		);
+		let page = admin
+			.get(format!("{base}/dlp"))
+			.send()
+			.await
+			.unwrap()
+			.text()
+			.await
+			.unwrap();
+		let row = page
+			.split("<td>email</td>")
+			.nth(1)
+			.unwrap()
+			.split("</tr>")
+			.next()
+			.unwrap();
+		assert!(row.contains(expected), "{row}");
+		let untouched = page
+			.split("<td>medicare</td>")
+			.nth(1)
+			.unwrap()
+			.split("</tr>")
+			.next()
+			.unwrap();
+		assert!(untouched.contains("Observe only · would redact"));
+	}
+	assert_eq!(
+		admin
+			.post(format!("{base}/dlp/rules"))
+			.form(&[
+				("kind", "email"),
+				("action", "allow"),
+				("operation", "delete-all")
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::BAD_REQUEST
+	);
+}
+
+#[tokio::test]
+async fn disabling_presidio_stops_external_analysis_requests() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	let calls = Arc::new(AtomicUsize::new(0));
+	let count = calls.clone();
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let analyzer = format!("http://{}/analyze", listener.local_addr().unwrap());
+	let mock = axum::Router::new().route(
+		"/analyze",
+		axum::routing::post(move || {
+			let count = count.clone();
+			async move {
+				count.fetch_add(1, Ordering::SeqCst);
+				axum::Json(json!([]))
+			}
+		}),
+	);
+	let task = tokio::spawn(async move {
+		axum::serve(listener, mock).await.unwrap();
+	});
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (approver, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&approver, &base, "alex").await;
+	admin
+		.post(format!("{base}/settings"))
+		.form(&[
+			("sovereign", "true"),
+			("telemetry", "false"),
+			("presidio", analyzer.as_str()),
+			("retention", "365"),
+		])
+		.send()
+		.await
+		.unwrap();
+	for disabled in [false, true] {
+		if disabled {
+			assert_eq!(
+				admin
+					.post(format!("{base}/dlp/rules"))
+					.form(&[
+						("kind", "presidio"),
+						("action", "redact"),
+						("operation", "disable")
+					])
+					.send()
+					.await
+					.unwrap()
+					.status(),
+				StatusCode::SEE_OTHER
+			);
+		}
+		let html = admin
+			.get(format!("{base}/policies"))
+			.send()
+			.await
+			.unwrap()
+			.text()
+			.await
+			.unwrap();
+		let id = html
+			.split("/revisions/")
+			.nth(1)
+			.unwrap()
+			.split('/')
+			.next()
+			.unwrap();
+		assert_eq!(
+			approver
+				.post(format!("{base}/revisions/{id}/approve"))
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::SEE_OTHER
+		);
+		assert!(
+			admin
+				.post(format!("{base}/mcp/check"))
+				.json(&mcp(
+					None,
+					"example-au-model",
+					"ap-southeast-2",
+					"example-au-model",
+					"synthetic ordinary message"
+				))
+				.send()
+				.await
+				.unwrap()
+				.status()
+				.is_success()
+		);
+		assert_eq!(calls.load(Ordering::SeqCst), 1);
+	}
+	task.abort();
+}

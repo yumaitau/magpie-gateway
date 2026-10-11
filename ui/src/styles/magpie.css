@@ -197,3 +197,12 @@
 	text-decoration: underline;
 	text-underline-offset: 3px;
 }
+
+.magpie-governance th[scope='row'] {
+	background: transparent;
+	color: var(--text);
+	font-size: inherit;
+	letter-spacing: normal;
+	text-transform: none;
+	overflow-wrap: anywhere;
+}
