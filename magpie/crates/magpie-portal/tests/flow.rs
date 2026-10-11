@@ -2174,3 +2174,234 @@ async fn disabling_presidio_stops_external_analysis_requests() {
 	}
 	task.abort();
 }
+
+#[tokio::test]
+async fn dlp_tuning_previews_privately_and_activates_only_after_approval() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (approver, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&approver, &base, "alex").await;
+	let settings: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(settings["canEdit"], true);
+	let draft = json!({"kind":"email","action":"redact","enabled":true,"expectedRevision":0,"exactValue":"fixture@example.com","exceptionLabel":"Test fixture","text":"fixture@example.com"});
+	let response = admin
+		.post(format!("{base}/api/magpie/dlp/preview"))
+		.json(&draft)
+		.send()
+		.await
+		.unwrap();
+	assert!(response.status().is_success());
+	let preview = response.text().await.unwrap();
+	assert!(!preview.contains("fixture@example.com"));
+	let result: serde_json::Value = serde_json::from_str(&preview).unwrap();
+	assert_eq!(result["active"]["action"], "redact");
+	assert_eq!(result["draft"]["action"], "allow");
+	let audit = admin
+		.get(format!("{base}/audit.csv"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(!audit.contains("fixture@example.com"));
+	let result: serde_json::Value = admin
+		.post(format!("{base}/api/magpie/dlp/save"))
+		.json(&draft)
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(result["pending"], true);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/magpie/dlp/save"))
+			.json(&draft)
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::CONFLICT
+	);
+	let pending: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let email = pending["rules"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|r| r["kind"] == "email")
+		.unwrap();
+	assert_eq!(email["pending"], true);
+	assert_eq!(email["exceptions"], json!([]));
+	let html = admin
+		.get(format!("{base}/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	assert!(!html.contains("fixture@example.com"));
+	let id = html
+		.split("/revisions/")
+		.nth(1)
+		.unwrap()
+		.split('/')
+		.next()
+		.unwrap();
+	assert_eq!(
+		approver
+			.post(format!("{base}/revisions/{id}/approve"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let current: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert!(!current.to_string().contains("fingerprint"));
+	let email = current["rules"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|r| r["kind"] == "email")
+		.unwrap();
+	assert_eq!(email["exceptions"].as_array().unwrap().len(), 1);
+	assert_eq!(
+		admin
+			.post(format!("{base}/api/magpie/dlp/save"))
+			.json(&json!({"kind":"email","action":"block","enabled":true,"expectedRevision":0}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::CONFLICT
+	);
+	let checked: serde_json::Value = admin
+		.post(format!("{base}/mcp/check"))
+		.json(&mcp(
+			None,
+			"example-au-model",
+			"ap-southeast-2",
+			"example-au-model",
+			"fixture@example.com",
+		))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(checked["decision"], "pass");
+	assert_eq!(checked["hits"], json!([]));
+	let restored = admin
+		.post(format!("{base}/dlp/rules"))
+		.form(&[
+			("kind", "email"),
+			("action", "redact"),
+			("operation", "restore"),
+		])
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(restored.status(), StatusCode::SEE_OTHER);
+	let html = admin
+		.get(format!("{base}/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.text()
+		.await
+		.unwrap();
+	let id = html
+		.split("/revisions/")
+		.nth(1)
+		.unwrap()
+		.split('/')
+		.next()
+		.unwrap();
+	approver
+		.post(format!("{base}/revisions/{id}/approve"))
+		.send()
+		.await
+		.unwrap();
+	let restored: serde_json::Value = admin
+		.get(format!("{base}/api/magpie/dlp"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(
+		restored["rules"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.find(|r| r["kind"] == "email")
+			.unwrap()["exceptions"],
+		json!([])
+	);
+}
+
+#[tokio::test]
+async fn dlp_tuning_requires_edit_permission_and_rejects_invalid_exceptions() {
+	let base = spawn(false).await;
+	let (admin, _) = client(&base);
+	let (reader, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	login(&reader, &base, "alex").await;
+	admin
+		.post(format!("{base}/access/roles"))
+		.form(&[
+			("id", "policy-editor"),
+			("name", "Policy reader"),
+			("permission.readPolicies", "1"),
+		])
+		.send()
+		.await
+		.unwrap();
+	let draft = json!({"kind":"email","action":"log","enabled":true,"expectedRevision":0,"text":"fixture@example.com"});
+	for endpoint in ["preview", "save"] {
+		assert_eq!(
+			reader
+				.post(format!("{base}/api/magpie/dlp/{endpoint}"))
+				.json(&draft)
+				.send()
+				.await
+				.unwrap()
+				.status(),
+			StatusCode::FORBIDDEN
+		);
+	}
+	for (kind, value, label) in [
+		("marking", "SECRET", "Fixture"),
+		("email", "fixture@example.com", "fixture@example.com"),
+		("email", "fixture@example.com", ""),
+	] {
+		assert_eq!(admin.post(format!("{base}/api/magpie/dlp/save")).json(&json!({"kind":kind,"action":"log","enabled":true,"expectedRevision":0,"exactValue":value,"exceptionLabel":label})).send().await.unwrap().status(),StatusCode::BAD_REQUEST);
+	}
+}

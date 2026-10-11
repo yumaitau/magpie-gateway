@@ -15,9 +15,11 @@ import { isMagpie } from '@/magpie';
 import { CelPage } from '@/pages/Cel';
 import { ClientSetupPage } from '@/pages/ClientSetup';
 import { CostsPage } from '@/pages/Costs';
+import { DlpTuningPage } from '@/pages/DlpTuning';
 import { DumpPoliciesPage } from '@/pages/DumpPolicies';
 import { LlmGetStartedPage, McpGetStartedPage, TrafficGetStartedPage } from '@/pages/GetStarted';
 import { GuardrailsPage } from '@/pages/Guardrails';
+import { HelpPage } from '@/pages/Help';
 import { HomePage } from '@/pages/Home';
 import { KeysPage } from '@/pages/Keys';
 import { LoginPage } from '@/pages/Login';
@@ -69,6 +71,22 @@ const appRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	id: 'app',
 	component: Shell
+});
+
+const helpRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/help',
+	component: HelpPage
+});
+const helpTopicRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/help/$topic',
+	component: HelpPage
+});
+const dlpTuningRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/dlp-tuning',
+	component: DlpTuningPage
 });
 
 const magpieAccountRoute = createRoute({
@@ -284,6 +302,9 @@ const router = createRouter({
 		appRoute.addChildren([
 			indexRoute,
 			magpieAccountRoute,
+			helpRoute,
+			helpTopicRoute,
+			dlpTuningRoute,
 			magpiePeopleRoute,
 			magpieGovernanceRoute,
 			dumpPoliciesRoute,

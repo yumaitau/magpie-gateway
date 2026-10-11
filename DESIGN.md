@@ -52,3 +52,14 @@ existing model. Configuring a model does not imply its connection has been teste
 Setup uses an API-key field by default, with credential sources under Advanced credentials. Connection success requires an actual model response. The checklist remembers browser-local model tests and explicitly confirmed app connections, and collapses once both are complete. Alerts is an essential navigation item for administrators; destinations start disabled, with SMTP and authentication settings under a disclosure.
 
 Controls is an essential navigation item for policy readers. It shows effective enforcement, plain-language framework names and direct edit paths. Essential Eight strategy details and framework sources use disclosures. Detector actions distinguish disabled rules from allow/log and show pending approval separately from the active state.
+
+Getting started & help stays in the primary navigation for signed-in users.
+Eight task guides contain ordered steps, links to the working screens and an
+explicit success check. A searchable glossary explains common settings, with
+advanced definitions collapsed. The header Help link opens the guide relevant
+to the current screen; Home links directly to first-model setup instructions.
+
+Tune DLP is a primary navigation item for policy readers. The flow is choose,
+adjust, compare, save. Show active versus draft decisions and pending approvals
+separately. Exact-value exceptions and disabling live under a disclosure. Never
+save preview samples or display original exception values after saving.

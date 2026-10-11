@@ -3,6 +3,7 @@ import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-route
 import {
 	BarChart3,
 	Bolt,
+	BookOpen,
 	Bot,
 	Boxes,
 	Braces,
@@ -45,6 +46,7 @@ import {
 	useTrafficConfigData
 } from '@/hooks';
 import { isMagpie, useMagpieSession } from '@/magpie';
+import { helpTopic } from '@/pages/Help';
 
 type NavItemConfig = {
 	to: string;
@@ -130,6 +132,7 @@ export function Shell() {
 					title: 'Workspace',
 					items: [
 						{ to: '/account', label: 'My account', icon: UserRound },
+						{ to: '/help', label: 'Getting started & help', icon: BookOpen },
 						...(magpie.data?.canManagePeople
 							? [{ to: '/people', label: 'People', icon: UserRound }]
 							: [])
@@ -139,13 +142,15 @@ export function Shell() {
 				{
 					title: 'Governance',
 					items: (magpie.data?.links || []).map(item => ({
-						to: `/governance${item.href}`,
+						to: item.href === '/dlp' ? '/dlp-tuning' : `/governance${item.href}`,
 						label:
-							item.href === '/access'
-								? 'Roles and groups'
-								: item.href === '/settings'
-									? 'Enforcement and settings'
-									: item.label,
+							item.href === '/dlp'
+								? 'Tune DLP'
+								: item.href === '/access'
+									? 'Roles and groups'
+									: item.href === '/settings'
+										? 'Enforcement and settings'
+										: item.label,
 						icon: ShieldCheck
 					}))
 				}
@@ -170,7 +175,7 @@ export function Shell() {
 	}, [router.location.pathname]);
 
 	return (
-		<div className="app-shell">
+		<div className={`app-shell${isMagpie ? ' magpie-shell' : ''}`}>
 			<aside className="sidebar">
 				<Link
 					to={canReadGateway ? '/' : '/account'}
@@ -234,6 +239,17 @@ export function Shell() {
 						)}
 					</div>
 					<div className="topbar-controls">
+						{isMagpie && (
+							<Link
+								to="/help/$topic"
+								params={{ topic: helpTopic(router.location.pathname) }}
+								aria-label="Help"
+								title="Help for this page"
+								className="icon-button"
+							>
+								<BookOpen size={18} aria-hidden="true" />
+							</Link>
+						)}
 						{isMagpie &&
 							magpie.data &&
 							(magpie.data.links.some(item => item.href === '/settings') ? (
@@ -491,6 +507,8 @@ function navigationGroups(options: {
 const essentialPaths = new Set([
 	'/',
 	'/account',
+	'/help',
+	'/dlp-tuning',
 	'/people',
 	'/llm/get-started',
 	'/llm/models',

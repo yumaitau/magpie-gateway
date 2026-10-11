@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { Check } from 'lucide-react';
 
+import { isMagpie } from '@/magpie';
 import { useSetupProgress } from '@/setupProgress';
 
 export function QuickStart(props: {
@@ -24,6 +25,11 @@ export function QuickStart(props: {
 						{props.hasModels ? 'Your next steps' : 'Start with your first model'}
 					</h2>
 					<p>Connect a provider, try a prompt, then use the gateway in your app.</p>
+					{isMagpie && (
+						<Link to="/help/$topic" params={{ topic: 'start' }}>
+							Follow the step-by-step setup guide
+						</Link>
+					)}
 				</div>
 				<ol className="quick-start-steps">
 					<li>

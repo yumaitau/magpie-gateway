@@ -435,6 +435,7 @@ mod tests {
 				id: "abn".into(),
 				kind: dlp::HitKind::Abn,
 				enabled: true,
+				exceptions: Vec::new(),
 				action,
 			}];
 			let policy = PolicySet {

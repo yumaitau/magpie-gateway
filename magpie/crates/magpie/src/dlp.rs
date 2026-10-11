@@ -109,6 +109,29 @@ pub struct DlpRule {
 	pub action: Action,
 	#[serde(default = "enabled_by_default")]
 	pub enabled: bool,
+	#[serde(default)]
+	pub exceptions: Vec<DlpException>,
+}
+
+/// Exact matches are stored as keyed fingerprints, never original values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DlpException {
+	pub id: String,
+	pub label: String,
+	pub fingerprint: String,
+}
+
+pub fn exception_fingerprint(kind: HitKind, value: &str, key: &[u8]) -> Option<String> {
+	if key.is_empty() || value.is_empty() || matches!(kind, HitKind::Marking | HitKind::Caveat) {
+		return None;
+	}
+	let mut mac = HmacSha256::new_from_slice(key).ok()?;
+	mac.update(b"magpie-dlp-exception-v1\0");
+	mac.update(kind_name(kind).as_bytes());
+	mac.update(b"\0");
+	mac.update(value.as_bytes());
+	Some(hex8(&mac.finalize().into_bytes()))
 }
 
 fn enabled_by_default() -> bool {
@@ -179,6 +202,7 @@ pub fn default_rules() -> Vec<DlpRule> {
 			kind,
 			action: Action::Redact,
 			enabled: true,
+			exceptions: Vec::new(),
 		})
 		.chain([
 			DlpRule {
@@ -186,12 +210,14 @@ pub fn default_rules() -> Vec<DlpRule> {
 				kind: HitKind::Marking,
 				action: Action::Log,
 				enabled: true,
+				exceptions: Vec::new(),
 			},
 			DlpRule {
 				id: "default-caveat".to_string(),
 				kind: HitKind::Caveat,
 				action: Action::Log,
 				enabled: true,
+				exceptions: Vec::new(),
 			},
 		])
 		.collect()
@@ -305,6 +331,24 @@ pub fn inspect(
 	let chosen: Vec<_> = spans
 		.into_iter()
 		.filter(|span| detector_enabled(&rules, span.kind))
+		.filter(|span| {
+			let Some(rule) = rules.iter().find(|rule| rule.kind == span.kind) else {
+				return true;
+			};
+			if rule.exceptions.is_empty() {
+				return true;
+			}
+			let Some(value) = text.get(span.start..span.end) else {
+				return true;
+			};
+			let Some(fingerprint) = exception_fingerprint(span.kind, value, token_key) else {
+				return true;
+			};
+			!rule
+				.exceptions
+				.iter()
+				.any(|exception| exception.fingerprint == fingerprint)
+		})
 		.collect();
 	let action = chosen
 		.iter()
@@ -484,6 +528,64 @@ fn apply_replacements(text: &str, spans: &[Span]) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn exact_exceptions_are_detector_specific_case_sensitive_and_fail_closed_on_key_change() {
+		let mut rules = default_rules();
+		let fingerprint =
+			exception_fingerprint(HitKind::Email, "fixture@example.com", b"private-key").unwrap();
+		assert!(!fingerprint.contains("fixture"));
+		rules
+			.iter_mut()
+			.find(|r| r.kind == HitKind::Email)
+			.unwrap()
+			.exceptions
+			.push(DlpException {
+				id: "one".into(),
+				label: "Test fixture".into(),
+				fingerprint,
+			});
+		let text = "fixture@example.com and real@example.com";
+		let outcome = inspect(text, &Default::default(), &rules, &[], b"private-key");
+		assert!(outcome.output.contains("fixture@example.com"));
+		assert!(!outcome.output.contains("real@example.com"));
+		assert_eq!(
+			outcome
+				.hits
+				.iter()
+				.filter(|h| h.kind == HitKind::Email)
+				.count(),
+			1
+		);
+		assert_eq!(
+			inspect(
+				"Fixture@example.com",
+				&Default::default(),
+				&rules,
+				&[],
+				b"private-key"
+			)
+			.action,
+			Action::Redact
+		);
+		assert_eq!(
+			inspect(
+				"fixture@example.com",
+				&Default::default(),
+				&rules,
+				&[],
+				b"rotated-key"
+			)
+			.action,
+			Action::Redact
+		);
+		assert_ne!(
+			exception_fingerprint(HitKind::Secret, "fixture@example.com", b"private-key"),
+			exception_fingerprint(HitKind::Email, "fixture@example.com", b"private-key")
+		);
+		assert!(exception_fingerprint(HitKind::Marking, "SECRET", b"private-key").is_none());
+		assert!(exception_fingerprint(HitKind::Email, "fixture@example.com", b"").is_none());
+	}
 
 	#[test]
 	fn old_rules_remain_enabled_and_disabled_rules_produce_no_findings() {

@@ -110,6 +110,10 @@ export function MagpieGovernancePage() {
 		inFlight.current = true;
 		if (form.method.toLowerCase() === 'get') {
 			action.search = params.toString();
+			if (action.pathname === '/ui/dlp-tuning') {
+				location.assign(action.href);
+				return;
+			}
 			void load(action.href);
 		} else {
 			void load(action.href, { method: 'POST', body: params });

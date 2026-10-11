@@ -109,3 +109,36 @@ Authoritative sources reviewed 11 October 2026:
 [current protective markings](https://www.stylemanual.gov.au/writing-and-designing-content/security-classifications-and-protective-markings).
 PSPF applicability depends on the entity and its obligations; it is not a
 universal requirement for every Australian organisation.
+
+## Tune false positives
+
+**Tune DLP** is in the main navigation. Choose a detector from recent finding
+counts or the selector, adjust its action, and compare an active rule with a
+draft using synthetic text. Audit log rows with DLP findings offer a **Tune**
+button for each detector. The comparison reports detector names, matching
+reasons, UTF-8 byte offsets and decisions. Its reference preview always sanitises
+recognised values, including values excluded by the draft. The test is local,
+not audited, not persisted and does not call Presidio or an AI provider. It does
+not simulate model approvals, routing, injection screening or the complete
+request/response transport.
+
+Monitor-only (`log`) affects one detector. Exact-value exceptions suppress only
+that detector’s matching findings, across all traffic connected to Magpie. They
+are case-sensitive and include whitespace and punctuation. Another detector can
+still act on overlapping text. Protective markings and caveats cannot have exact
+exceptions, and classification routing remains independent.
+
+Exceptions persist an HMAC-SHA256 fingerprint keyed by the session secret, plus
+an ID and operator label; the original value is not saved. Do not include the
+value in the label. Rotating the session secret invalidates existing fingerprints
+and matching reverts to normal detection until exceptions are recreated. Labels
+are visible to policy readers and reviewers; fingerprints are omitted from the
+tuning API. Each detector allows up to 32 exceptions, with values up to 512 bytes
+and labels up to 80 bytes. Remove an exception through the same preview/save
+flow; restore-default clears every exception on that detector.
+
+Saving requires `editDlp`, checks the active revision, rejects competing pending
+changes, and uses the normal second-person approval setting. The tuner never
+changes global enforcement mode. Existing rules lacking `exceptions` retain
+normal matching. No production detector action or exception is changed by the
+feature deployment.

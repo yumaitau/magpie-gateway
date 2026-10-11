@@ -96,3 +96,55 @@ test('controls explain effective coverage and disabling creates a pending revisi
  await expect(page.locator('section[aria-label="Change approvals"]')).toContainText('default-email');
  await expect(page.locator('section[aria-label="Change approvals"]')).toContainText('enabled');
 });
+
+test('help guides explain setup and options with contextual navigation',async({page})=>{
+ await login(page);
+ await page.getByRole('link',{name:'Getting started & help',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Get your first model working',exact:true})).toBeVisible();
+ for(const topic of ['start','clients','dlp','controls','alerts','people','mcp','troubleshooting']) {
+  await page.goto(`${base}/ui/help/${topic}`);
+  await expect(page.locator('.help-guide li').first()).toBeVisible();
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+ }
+ await page.getByLabel('Search guides and options').fill('SMTP');
+ await expect(page.getByText('SMTP / sender / recipient',{exact:true})).toBeVisible();
+ await expect(page.getByText('No matches. Try a detector name, screen name or setting.')).toHaveCount(0);
+ await page.goto(`${base}/ui/dlp-tuning`);
+ await page.getByRole('link',{name:'Help',exact:true}).click();
+ await expect(page).toHaveURL(`${base}/ui/help/dlp`);
+ await page.setViewportSize({width:390,height:900});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+ if(process.env.MAGPIE_SCREENSHOTS) await page.screenshot({path:`${process.env.MAGPIE_SCREENSHOTS}/help-mobile.png`,fullPage:true});
+});
+
+test('DLP tuning compares an exact exception without saving the sample',async({page})=>{
+ await login(page);
+ const decision=await page.request.post(`${base}/mcp/check`,{data:{method:'tools/call',tool:null,model:null,agentId:'ui-test',destinationRegion:'au',destinationName:'local-test',phase:'request',actor:'ui-test',resultText:'fixture@example.com'}});expect(decision.ok()).toBe(true);
+ await page.goto(`${base}/ui/governance/audit`);
+ await page.getByRole('button',{name:'Tune email',exact:true}).first().click();
+ await expect(page.getByLabel('1. Choose a detector',{exact:true})).toHaveValue('email');
+ await page.getByLabel('1. Choose a detector',{exact:true}).selectOption('phone');
+ await page.getByText('Exact-value exceptions and advanced options',{exact:true}).click();
+ await page.getByLabel('Exact value to ignore',{exact:true}).fill('0412 345 678');
+ await page.getByLabel('Exception label',{exact:true}).fill('Synthetic phone fixture');
+ await page.getByLabel('Synthetic sample text',{exact:true}).fill('Phone 0412 345 678');
+ await page.getByRole('button',{name:'Compare active and draft',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Comparison',exact:true})).toBeVisible();
+ await expect(page.locator('.dlp-tuner')).toContainText('Draft DLP: allow');
+ await expect(page.locator('.dlp-tuner pre')).not.toContainText('0412 345 678');
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ if(process.env.MAGPIE_SCREENSHOTS) await page.screenshot({path:`${process.env.MAGPIE_SCREENSHOTS}/tuning-mobile.png`,fullPage:true});
+ await page.setViewportSize({width:1440,height:900});
+ if(process.env.MAGPIE_SCREENSHOTS) await page.screenshot({path:`${process.env.MAGPIE_SCREENSHOTS}/tuning-desktop.png`,fullPage:true});
+ await page.getByRole('button',{name:'Save for approval',exact:true}).click();
+ await expect(page.getByText('Saved for approval. The active rule has not changed. A different authorised person must approve it.',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Save for approval',exact:true})).toBeDisabled();
+ const result=await (await page.request.get(`${base}/api/magpie/dlp`)).json();
+ expect(result.rules.find(r=>r.kind==='phone').exceptions).toEqual([]);
+ expect(JSON.stringify(result)).not.toContain('0412 345 678');
+});

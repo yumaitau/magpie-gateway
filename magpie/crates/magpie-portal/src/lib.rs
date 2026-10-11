@@ -8,6 +8,7 @@ pub mod alerts;
 mod australia;
 mod controls;
 mod native;
+mod tuning;
 mod ui;
 
 use std::collections::HashMap;
@@ -262,6 +263,9 @@ pub fn router(state: AppState) -> Router {
 		.route("/dlp/rules", post(dlp_rule_post))
 		.route("/australia", get(australia::overview))
 		.route("/controls", get(controls::overview))
+		.route("/api/magpie/dlp", get(tuning::get))
+		.route("/api/magpie/dlp/preview", post(tuning::preview))
+		.route("/api/magpie/dlp/save", post(tuning::save))
 		.route("/alerts", get(alerts::page_get).post(alerts::post))
 		.route("/audit", get(audit_page))
 		.route("/audit.csv", get(audit_csv))
@@ -1406,6 +1410,11 @@ async fn dlp_page(
 		} else {
 			format!("On · {}", rule.action.as_str())
 		};
+		let effective = if rule.exceptions.is_empty() {
+			effective
+		} else {
+			format!("{effective} · {} exact exceptions", rule.exceptions.len())
+		};
 		let operation = if rule.enabled { "disable" } else { "enable" };
 		let operation_label = if rule.enabled {
 			"Disable detector"
@@ -1419,8 +1428,8 @@ async fn dlp_page(
 <p><a href="/settings">Manage log-only or enforcement mode</a> · <a href="/australia">Australian assurance and detector coverage</a></p>
 <p class="banner">Log-only records what the policy would do and sends traffic unchanged. Redact, mask, tokenise and block take effect in enforcement mode. This test always shows a sanitised preview.</p>
 <p><a href="/controls">View all controls and framework coverage</a></p>
-<p>Disable removes this detector’s findings and actions. Allow still detects and records findings. Restore default enables the detector and resets its action. Changes may need a different person’s approval; the table always shows the active revision. Marking and caveat detection settings do not disable built-in classification routing. Disabling Presidio also stops requests to its analyser.</p>
-<h2>Detector actions</h2>{}
+<p>Disable removes this detector’s findings and actions. Allow still detects and records findings. Restore default enables the detector, resets its action and removes its exceptions. Changes may need a different person’s approval; the table always shows the active revision. Marking and caveat detection settings do not disable built-in classification routing. Disabling Presidio also stops requests to its analyser.</p>
+<p><a href="/ui/dlp-tuning">Tune false positives with a before-and-after test</a> · <a href="/ui/help/dlp">Step-by-step DLP guide</a></p><h2>Detector actions</h2>{}
 <p>Mask reveals the final two characters. Tokenise creates a keyed, non-reversible pseudonym. Public ABNs and ACNs can be set to allow where your organisation permits it.</p>
 <section id="pending-changes" aria-label="Change approvals">{}</section>
 <h2>Test Australian privacy controls</h2>
@@ -1475,6 +1484,7 @@ async fn dlp_rule_post(
 				.unwrap();
 			rule.action = default.action;
 			rule.enabled = default.enabled;
+			rule.exceptions.clear();
 		},
 		Some("disable") => rule.enabled = false,
 		Some("enable") => rule.enabled = true,
@@ -1621,7 +1631,15 @@ async fn audit_page(
 		ui::esc(&filter.kind),
 		table(
 			&[
-				"When", "Kind", "Actor", "Agent", "Model", "Tool", "Decision", "Reason"
+				"When",
+				"Kind",
+				"Actor",
+				"Agent",
+				"Model",
+				"Tool",
+				"Decision",
+				"Reason",
+				"DLP tuning"
 			],
 			&rows_audit_full(&events)
 		)
@@ -2783,9 +2801,13 @@ fn load_rules(state: &AppState) -> Vec<DlpRule> {
 		.expect("db")
 		.list_documents("dlp_rule")
 		.unwrap_or_default();
+	rules_from_documents(&docs)
+}
+
+fn rules_from_documents(docs: &[Document]) -> Vec<DlpRule> {
 	let mut rules = dlp::default_rules();
-	for doc in docs.into_iter().filter(|doc| doc.active) {
-		if let Ok(rule) = serde_json::from_value::<DlpRule>(doc.body)
+	for doc in docs.iter().filter(|doc| doc.active) {
+		if let Ok(rule) = serde_json::from_value::<DlpRule>(doc.body.clone())
 			&& let Some(existing) = rules.iter_mut().find(|r| r.kind == rule.kind)
 		{
 			*existing = rule;
@@ -2842,6 +2864,17 @@ fn save_revision(
 	require_approval: bool,
 ) -> magpie::Result<magpie::change::RevisionStatus> {
 	let store = state.inner.store.lock().expect("db");
+	save_revision_in_store(&store, kind, id, actor, after, require_approval)
+}
+
+fn save_revision_in_store(
+	store: &Store,
+	kind: &str,
+	id: &str,
+	actor: &str,
+	after: Value,
+	require_approval: bool,
+) -> magpie::Result<magpie::change::RevisionStatus> {
 	let existing = store.get_document(kind, id)?;
 	let before = existing
 		.as_ref()
@@ -3175,9 +3208,25 @@ fn rows_audit_full(events: &[AuditEvent]) -> Vec<Vec<String>> {
 				event.tool.clone(),
 				event.decision.clone(),
 				event.reason.clone(),
+				tuning_links(event),
 			]
 		})
 		.collect()
+}
+
+fn tuning_links(event: &AuditEvent) -> String {
+	let kinds = serde_json::from_value::<Vec<dlp::PublicHit>>(event.detail["hits"].clone())
+		.unwrap_or_default()
+		.iter()
+		.map(|hit| {
+			serde_json::to_value(hit.kind)
+				.unwrap()
+				.as_str()
+				.unwrap()
+				.to_string()
+		})
+		.collect::<std::collections::BTreeSet<_>>();
+	kinds.into_iter().map(|kind|format!(r#"<form method="get" action="/ui/dlp-tuning"><input type="hidden" name="detector" value="{}"><button type="submit">Tune {}</button></form>"#,ui::esc(&kind),ui::esc(&kind))).collect()
 }
 
 fn selected(on: bool) -> &'static str {

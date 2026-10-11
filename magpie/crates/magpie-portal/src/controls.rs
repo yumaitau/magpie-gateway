@@ -79,7 +79,7 @@ pub(super) async fn overview(State(state): State<AppState>, headers: HeaderMap) 
 	let body = format!(
 		r#"<p>See what is in play and where to change it. Framework names describe alignment; they are not switches or a compliance score.</p>
 <h2>Gateway mode: {mode}</h2><p>{effect}. Coverage applies only to traffic connected to Magpie guardrails. Login and portal permissions are always enforced.</p><p>{edit_settings}</p>
-<h2>Privacy and information handling</h2>{privacy}
+<h2>Privacy and information handling</h2><p><a href="/ui/dlp-tuning">Tune false positives</a> · <a href="/ui/help/dlp">DLP tuning guide</a></p>{privacy}
 <h2>ISM — Information Security Manual</h2><p>These gateway capabilities support parts of an ISM assessment. They do not implement the whole manual.</p>{ism}
 <h2>Essential Eight</h2><p>Portal roles and identity integration provide limited support. The remaining strategies require controls in your devices, applications and infrastructure. No maturity level is assessed here.</p>
 <details><summary>See all eight strategies and their owners</summary>{e8}</details>
