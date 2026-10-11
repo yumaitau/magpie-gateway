@@ -42,6 +42,17 @@ async function setKillAgent(page, value) {
   await expect(page.locator('#kill_agent')).toHaveValue(value);
 }
 
+test('bare address opens login, then the dashboard for a signed-in user', async ({ page }) => {
+  const response = await page.goto(base);
+  expect(response.status()).toBe(200);
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('button', { name: 'Sign in as administrator' })).toBeVisible();
+  await signIn(page);
+  const signedIn = await page.goto(base);
+  expect(signedIn.status()).toBe(200);
+  await expect(page).toHaveURL(/\/dashboard$/);
+});
+
 test('login page offers the administrator form and passes axe', async ({ page }) => {
   await page.goto(`${base}/login`);
   await expect(page.getByRole('heading', { name: 'Administrator' })).toBeVisible();

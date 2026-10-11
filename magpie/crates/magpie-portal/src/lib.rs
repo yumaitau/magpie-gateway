@@ -172,6 +172,7 @@ pub fn router(state: AppState) -> Router {
 		));
 	Router::new()
 		.merge(webhooks)
+		.route("/", get(async || Redirect::to("/dashboard")))
 		.route("/healthz", get(health))
 		.route("/login", get(login))
 		.route("/api/auth/start", get(auth_start))

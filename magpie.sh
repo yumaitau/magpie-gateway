@@ -825,6 +825,9 @@ cmd_check() {
 	code="$(curl -s -o /dev/null -w '%{http_code}' "$base/healthz")"
 	[[ $code == 200 ]] && result "portal answers" ok || result "portal answers" fail "HTTP $code"
 
+	code="$(curl -sL --max-redirs 5 -o /dev/null -w '%{http_code}' "$base/")"
+	[[ $code == 200 ]] && result "bare address opens the portal" ok || result "bare address opens the portal" fail "HTTP $code"
+
 	code="$(curl -s -o /dev/null -w '%{http_code}' "$base/v1/models")"
 	[[ $code == 401 || $code == 403 ]] && result "gateway refuses a request without a key" ok || result "gateway refuses a request without a key" fail "HTTP $code"
 

@@ -161,6 +161,32 @@ fn mcp(
 }
 
 #[tokio::test]
+async fn homepage_opens_login_or_dashboard_without_bypassing_authentication() {
+	let base = spawn(false).await;
+	let (client, _) = client(&base);
+	let root = client.get(format!("{base}/")).send().await.expect("root");
+	assert_eq!(root.status(), StatusCode::SEE_OTHER);
+	assert_eq!(root.headers()[LOCATION], "/dashboard");
+	let dashboard = client
+		.get(format!("{base}/dashboard"))
+		.send()
+		.await
+		.expect("dashboard");
+	assert_eq!(dashboard.status(), StatusCode::SEE_OTHER);
+	assert_eq!(dashboard.headers()[LOCATION], "/login");
+
+	login(&client, &base, "alex").await;
+	let root = client.get(format!("{base}/")).send().await.expect("root");
+	assert_eq!(root.headers()[LOCATION], "/dashboard");
+	let dashboard = client
+		.get(format!("{base}/dashboard"))
+		.send()
+		.await
+		.expect("dashboard");
+	assert_eq!(dashboard.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn oidc_login_sets_a_session_cookie_and_opens_the_dashboard() {
 	let base = spawn(false).await;
 	let (client, jar) = client(&base);
