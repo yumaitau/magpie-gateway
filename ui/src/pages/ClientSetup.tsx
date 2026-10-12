@@ -14,6 +14,7 @@ import windsurfIcon from '@/assets/windsurf.svg';
 import { claudeSubscriptionWarning } from '@/claudeSubscription';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
 import { FreeformCombobox } from '@/components/FreeformCombobox';
+import { type CatalogSelection, GatewayModelPicker } from '@/components/GatewayModelPicker';
 import {
 	Dropdown,
 	Field,
@@ -111,6 +112,7 @@ export function ClientSetupPage() {
 	const [baseUrl, setBaseUrl] = useState(derivedBaseUrl);
 	const [baseUrlTouched, setBaseUrlTouched] = useState(false);
 	const [model, setModel] = useState('');
+	const [catalogSelection, setCatalogSelection] = useState<CatalogSelection | null>(null);
 	const [modelTouched, setModelTouched] = useState(false);
 	const [specificModel, setSpecificModel] = useState('');
 	const [apiKeyMode, setApiKeyMode] = useState<'saved' | 'raw'>('saved');
@@ -143,9 +145,11 @@ export function ClientSetupPage() {
 	const apiKey = selectedVirtualKey?.key ?? rawKey;
 	const effectiveBaseUrl = baseUrlTouched ? baseUrl : derivedBaseUrl;
 	// In XDS mode the name is typed or picked directly, so there is no model config to resolve.
-	const requestModel = dumpMode
-		? dumpRequestModel(selectedModel, specificModel)
-		: clientSetupRequestModel(selectedModelOption, selectedModel, specificModel, providers);
+	const requestModel = catalogSelection
+		? ''
+		: dumpMode
+			? dumpRequestModel(selectedModel, specificModel)
+			: clientSetupRequestModel(selectedModelOption, selectedModel, specificModel, providers);
 	const recipes = clientRecipes({
 		baseUrl: effectiveBaseUrl,
 		model: requestModel || 'model',
@@ -159,7 +163,7 @@ export function ClientSetupPage() {
 				title="Client Setup"
 				description="Generate connection settings and snippets for LLM clients."
 			/>
-			{!dumpMode && selectedModel ? (
+			{!dumpMode && selectedModel && !catalogSelection ? (
 				<div className="panel">
 					<p>
 						After your app completes a request, mark this step done. Progress is saved in this
@@ -241,19 +245,21 @@ export function ClientSetupPage() {
 								emptyText="No models in the dump"
 							/>
 						) : (
-							<Dropdown
-								ariaLabel="Model"
+							<GatewayModelPicker
 								value={selectedModel}
-								placeholder="No models"
-								searchable
-								options={modelOptions.map(item => ({
+								models={models}
+								providers={providers}
+								configuredOptions={modelOptions.map(item => ({
 									value: item.name,
 									label: item.name,
-									description: item.kind === 'virtual' ? 'Virtual model' : undefined,
-									icon: item.icon,
 									searchText: item.searchText
 								}))}
-								onChange={setModel}
+								catalogSelection={catalogSelection}
+								onCatalogSelection={setCatalogSelection}
+								onSelect={(name, specific) => {
+									setModel(name);
+									if (specific !== undefined) setSpecificModel(specific);
+								}}
 							/>
 						)}
 					</FieldGroup>
@@ -275,7 +281,9 @@ export function ClientSetupPage() {
 							</div>
 						</Field>
 					) : null}
-					{selectedModelConfig && isWildcardModelName(selectedModelConfig.name) ? (
+					{!catalogSelection &&
+					selectedModelConfig &&
+					isWildcardModelName(selectedModelConfig.name) ? (
 						<FieldGroup
 							label="Specific model"
 							hint="Model uses a wildcard; specify the specific model."
@@ -351,7 +359,11 @@ export function ClientSetupPage() {
 					</div>
 				</Panel>
 
-				{effectiveBaseUrl.trim() ? (
+				{catalogSelection ? (
+					<Panel>
+						<p>Set up the selected model connection before generating client settings.</p>
+					</Panel>
+				) : effectiveBaseUrl.trim() ? (
 					<ClientRecipeCard
 						recipe={activeRecipe}
 						recipes={recipes}

@@ -248,7 +248,8 @@ test('playground searches all models and getting started downloads a secret-free
  await login(page);
  const config={llm:{models:[
   {name:'claude-friendly',provider:'anthropic',params:{model:'claude-opus-5-5'}},
-  {name:'codex/*',provider:'openai'}
+  {name:'codex/*',provider:'openai'},
+  {name:'bedrock-friendly',provider:'bedrock',params:{model:'bedrock-opus-fixture'}}
  ],keys:[{name:'private-fixture-key',key:'never-export-this-secret'}]},binds:[]};
  await page.route('**/api/config',r=>r.fulfill({json:config}));
  await page.route('**/api/config/effective',r=>r.fulfill({json:config}));
@@ -256,13 +257,14 @@ test('playground searches all models and getting started downloads a secret-free
   {provider:'anthropic',name:'Anthropic',models:['claude-opus-5-5']},
   {provider:'openai',name:'OpenAI',models:['gpt-new-fixture']},
   {provider:'xai',name:'xAI',models:['grok-unconfigured-fixture']},
+  {provider:'aws.bedrock',name:'Amazon Bedrock',models:['bedrock-opus-fixture']},
   {provider:'opencode',name:'OpenCode',models:Array.from({length:130},(_,i)=>`zen-fixture-${i}`)}
  ]};
  await page.route('**/api/magpie/model-catalog',r=>r.fulfill({json:catalog}));
  await page.goto(`${base}/ui/llm/playground`);
- async function selectCatalog(search,option) {
-  await page.getByRole('combobox',{name:'Model',exact:true}).click();
-  await page.getByRole('combobox',{name:'Search Model',exact:true}).fill(search);
+ async function selectCatalog(search,option,label='Model') {
+  await page.getByRole('combobox',{name:label,exact:true}).first().click();
+  await page.getByRole('combobox',{name:`Search ${label}`,exact:true}).fill(search);
   await page.getByRole('option',{name:option}).click();
  }
  await selectCatalog('Opus 5.5',/^claude-opus-5-5/);
@@ -290,7 +292,47 @@ test('playground searches all models and getting started downloads a secret-free
  await page.getByRole('link',{name:'Set up this model'}).click();
  const drawer=page.getByRole('dialog',{name:'Add model',exact:true});
  await expect(drawer).toContainText('grok-unconfigured-fixture');
+ await page.goto(`${base}/ui/llm/client-setup`);
+ await selectCatalog('grok',/^grok-unconfigured-fixture/);
+ await expect(page.locator('.client-recipe-card')).toHaveCount(0);
+ await expect(page.getByRole('button',{name: "I've connected my app",exact:true})).toHaveCount(0);
+ await selectCatalog('Codex',/^gpt-new-fixture/);
+ await expect(page.locator('.client-recipe-card')).toContainText('codex/gpt-new-fixture');
+ await page.goto(`${base}/ui/llm/models#add=virtual`);
+ const virtualDrawer=page.getByRole('dialog');
+ await virtualDrawer.getByRole('textbox',{name:'Virtual model name',exact:false}).fill('catalog-test-virtual');
+ for(const strategy of ['Weighted','Failover','Conditional']) {
+  await virtualDrawer.getByRole('button',{name:strategy,exact:true}).click();
+  const label=strategy==='Conditional'?'Target model':'Model';
+  await selectCatalog('grok',/^grok-unconfigured-fixture/,label);
+  await expect(virtualDrawer.getByRole('button',{name:'Save virtual model',exact:true})).toBeDisabled();
+  await selectCatalog('Codex',/^gpt-new-fixture/,label);
+  await expect(virtualDrawer.getByRole('textbox',{name:'Specific model',exact:true}).first()).toHaveValue('gpt-new-fixture');
+ }
  await page.goto(`${base}/ui/help/start`);
+ const prompt=page.getByRole('textbox',{name:'Bootstrap prompt',exact:true});
+ await expect(prompt).toBeVisible();
+ await expect(prompt).toContainText('Discover the models available to my gateway key');
+ expect((await prompt.inputValue()).split(/\s+/).length).toBeLessThan(350);
+ await expect(page.getByRole('button',{name:'Copy bootstrap prompt'})).toBeEnabled();
+ await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedBootstrap=text;}}}));
+ await page.getByRole('button',{name:'Copy bootstrap prompt'}).click();
+ expect(await page.evaluate(()=>window.copiedBootstrap)).toBe(await prompt.inputValue());
+ await selectCatalog('grok',/^grok-unconfigured-fixture/);
+ await expect(prompt).toContainText('grok-unconfigured-fixture');
+ await expect(prompt).toContainText('no matching configured gateway route');
+ await expect(page.getByRole('button',{name:'Copy bootstrap prompt'})).toBeEnabled();
+ await selectCatalog('zen-fixture-129',/^zen-fixture-129/);
+ await expect(prompt).toContainText('zen-fixture-129');
+ await selectCatalog('bedrock-opus',/^bedrock-opus-fixture/);
+ await expect(prompt).toContainText('Use gateway model "bedrock-friendly"');
+ await selectCatalog('Codex',/^gpt-new-fixture/);
+ await expect(prompt).toContainText('Use gateway model "codex/gpt-new-fixture"');
+ await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('blocked');}}}));
+ await page.getByRole('button',{name:'Copy bootstrap prompt'}).click();
+ await expect(page.getByRole('status')).toContainText('Prompt selected');
+ expect(await prompt.evaluate(el=>el.selectionEnd-el.selectionStart)).toBe((await prompt.inputValue()).length);
+ await page.getByText('Options and downloads',{exact:true}).click();
  await page.getByLabel('Client to configure').selectOption('Codex');
  await page.getByLabel('Gateway model name').fill('codex/gpt-new-fixture');
  await page.getByLabel('Gateway URL',{exact:true}).fill('https://gateway.example.test');
@@ -305,7 +347,6 @@ test('playground searches all models and getting started downloads a secret-free
   if(name==='prompt.md') { expect(text).toContain('codex/gpt-new-fixture'); expect(text).toContain('MAGPIE_API_KEY'); expect(text).toContain('wire_api = "responses"'); }
   else { expect(text).toContain('rollback'); expect(text).toContain('separate virtual API key'); }
  }
- await page.getByText('Preview setup prompt',{exact:true}).click();
  for(const width of [1440,390]) {
   await page.setViewportSize({width,height:900});
   const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);

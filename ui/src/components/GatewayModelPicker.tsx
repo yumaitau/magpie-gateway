@@ -6,12 +6,14 @@ import { matchesModelSearch, useModelCatalog } from '@/modelCatalog';
 import { isWildcardModelName, modelCatalogProvider, resolveModelName } from '@/modelResolution';
 import type { LlmModel, LlmProvider } from '@/types';
 
-type CatalogSelection = { provider: string; model: string };
-export function PlaygroundModelPicker(props: {
+export type CatalogSelection = { provider: string; model: string };
+export function GatewayModelPicker(props: {
+	ariaLabel?: string;
+	purpose?: 'playground' | 'setup' | 'routing';
 	value: string;
 	models: LlmModel[];
 	providers: LlmProvider[];
-	configuredOptions: { value: string; label: string; searchText: string }[];
+	configuredOptions: { value: string; label: string; searchText: string; description?: string }[];
 	catalogSelection: CatalogSelection | null;
 	onCatalogSelection: (selection: CatalogSelection | null) => void;
 	onSelect: (name: string, specific?: string) => void;
@@ -48,7 +50,7 @@ export function PlaygroundModelPicker(props: {
 	return (
 		<>
 			<Dropdown
-				ariaLabel="Model"
+				ariaLabel={props.ariaLabel ?? 'Model'}
 				resultLimit={100}
 				searchMatcher={matchesModelSearch}
 				allowEmpty
@@ -63,7 +65,7 @@ export function PlaygroundModelPicker(props: {
 					...props.configuredOptions.map(item => ({
 						...item,
 						value: JSON.stringify({ route: item.value }),
-						description: 'Configured route'
+						description: item.description
 					})),
 					...entries.map(item => ({
 						value: JSON.stringify({ provider: item.provider, model: item.model }),
@@ -103,8 +105,11 @@ export function PlaygroundModelPicker(props: {
 			{props.catalogSelection && (
 				<div role="status">
 					<p>
-						{props.catalogSelection.model} needs a configured connection before you can send a
-						prompt. Your gateway key and approval rules still apply.
+						{props.catalogSelection.model}{' '}
+						{props.purpose === 'setup'
+							? 'needs a gateway connection. The bootstrap prompt includes this setup requirement.'
+							: 'needs a configured connection before it can be used.'}{' '}
+						Your gateway key and approval rules still apply.
 					</p>
 					<a
 						className="button"

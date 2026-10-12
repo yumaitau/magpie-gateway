@@ -33,7 +33,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Connect your app',
-				body: 'Download prompt.md above and give it to your local coding agent for guided machine setup. For manual setup, open Client Setup. Select your app or SDK, model, gateway base URL and gateway key. Copy the generated settings into your app, send a request and confirm it worked.',
+				body: 'Press Copy bootstrap prompt above and paste it into your coding agent. Leave the model on automatic or search the full catalog. For manual setup, open Client Setup. Select your app or SDK, model, gateway base URL and gateway key. Copy the generated settings into your app, send a request and confirm it worked.',
 				to: '/llm/client-setup',
 				link: 'Open Client Setup'
 			},
@@ -85,7 +85,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Select or type a model',
-				body: 'Open Models → All catalog models to browse every provider, even those not yet connected. Search by name, such as Opus 5.5 or Codex, and press Configure to start a draft. Configured routes shows only routes already added to your gateway. Chat Playground’s main Model picker also searches the full catalog. It selects a matching configured route or offers Set up this model. Existing wildcard routes can also choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
+				body: 'Open Models → All catalog models to browse every provider, even those not yet connected. Search by name, such as Opus 5.5 or Codex, and press Configure to start a draft. Configured routes shows only routes already added to your gateway. Getting Started, Client Setup, Chat Playground and virtual routing share a Model picker that searches the full catalog. It selects a matching configured route or offers Set up this model. Existing wildcard routes can also choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
 			},
 			{
 				title: 'Verify access and connect',

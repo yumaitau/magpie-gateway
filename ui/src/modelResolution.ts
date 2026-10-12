@@ -122,7 +122,16 @@ export function modelCatalogProvider(
 		}
 	}
 	const reference = providerReferenceName(model.provider);
-	if (!reference) return providerLabel(model.provider);
+	if (!reference) {
+		const provider = providerLabel(model.provider);
+		const aliases: Record<string, string> = {
+			bedrock: 'aws.bedrock',
+			gemini: 'gcp.gemini',
+			vertex: 'gcp.vertex_ai',
+			openai_legacy: 'openai'
+		};
+		return aliases[provider] ?? provider;
+	}
 	if (seen.has(reference)) return 'custom';
 	seen.add(reference);
 	const shared = providers.find(item => item.name === reference);

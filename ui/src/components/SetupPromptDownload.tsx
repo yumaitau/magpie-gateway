@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
+import { type CatalogSelection, GatewayModelPicker } from '@/components/GatewayModelPicker';
 import { llmGatewayOrigin } from '@/gatewayUrls';
 import { useLlmConfigData } from '@/hooks';
 import { rolloutGuide, setupPrompt } from '@/setupPrompt';
@@ -14,13 +15,14 @@ function download(name: string, content: string) {
 }
 
 export function SetupPromptDownload() {
-	const { config, models, virtualModels } = useLlmConfigData();
-	const [client, setClient] = useState('Detect installed clients');
-	const [model, setModel] = useState<string | null>(null);
+	const { config, models, virtualModels, providers } = useLlmConfigData();
+	const [client, setClient] = useState('This coding agent');
+	const [model, setModel] = useState('');
+	const [specificModel, setSpecificModel] = useState('');
+	const [catalogSelection, setCatalogSelection] = useState<CatalogSelection | null>(null);
 	const [gateway, setGateway] = useState<string | null>(null);
 	const [copied, setCopied] = useState('');
-	const selectedModel =
-		model ?? [...models, ...virtualModels].find(item => !item.name.includes('*'))?.name ?? '';
+	const promptRef = useRef<HTMLTextAreaElement>(null);
 	const origin = gateway ?? llmGatewayOrigin(config.data);
 	let validUrl = false;
 	try {
@@ -35,95 +37,143 @@ export function SetupPromptDownload() {
 	} catch {
 		/* Show validation below. */
 	}
-	const content = setupPrompt({ gateway: origin.replace(/\/$/, ''), model: selectedModel, client });
+	const content = setupPrompt({
+		gateway: origin.replace(/\/$/, ''),
+		model: catalogSelection?.model ?? (model.includes('*') ? specificModel || model : model),
+		client,
+		catalogProvider: catalogSelection?.provider
+	});
 	return (
 		<section className="panel" aria-label="Set up your machine">
 			<h2>Set up your machine</h2>
 			<p>
-				Download prompt.md and give it to your coding agent. It will detect your machine, configure
-				your client and test the connection. Supply your gateway key locally when asked; the
-				download contains no keys.
+				Copy this prompt into your coding agent. It will set up the connection and test it. You can
+				leave the model on automatic.
 			</p>
-			<div className="form-grid">
-				<label className="field">
-					<span>Client to configure</span>
-					<select value={client} onChange={event => setClient(event.target.value)}>
-						{['Detect installed clients', 'Claude Code', 'Codex', 'OpenCode'].map(item => (
-							<option key={item}>{item}</option>
-						))}
-					</select>
-				</label>
-				<label className="field">
-					<span>Gateway URL</span>
-					<input value={origin} onChange={event => setGateway(event.target.value)} />
-				</label>
-				<label className="field">
-					<span>Gateway model name</span>
-					<input
-						list="setup-prompt-models"
-						value={selectedModel}
-						onChange={event => setModel(event.target.value)}
-						placeholder="Leave blank to choose during setup"
-					/>
-					<datalist id="setup-prompt-models">
-						{[...models, ...virtualModels]
-							.filter(item => !item.name.includes('*'))
-							.map(item => (
-								<option key={item.name} value={item.name} />
-							))}
-					</datalist>
-				</label>
+			<div className="field">
+				<span>Model (optional)</span>
+				<GatewayModelPicker
+					purpose="setup"
+					value={model}
+					models={models}
+					providers={providers}
+					configuredOptions={[
+						{
+							value: '',
+							label: 'Let my agent choose',
+							searchText: 'automatic auto detect choose',
+							description: 'Discover models using your gateway key'
+						},
+						...[...models, ...virtualModels].map(item => ({
+							value: item.name,
+							label: item.name,
+							searchText: item.name
+						}))
+					]}
+					catalogSelection={catalogSelection}
+					onCatalogSelection={item => {
+						setCatalogSelection(item);
+						setCopied('');
+					}}
+					onSelect={(name, specific) => {
+						setModel(name);
+						setSpecificModel(specific ?? '');
+						setCopied('');
+					}}
+				/>
 			</div>
+			<label className="field">
+				<span>Bootstrap prompt</span>
+				<textarea ref={promptRef} readOnly rows={10} value={content} spellCheck={false} />
+			</label>
+			<button
+				type="button"
+				className="button primary"
+				disabled={!validUrl}
+				onClick={async () => {
+					try {
+						await navigator.clipboard.writeText(content);
+						setCopied('Prompt copied. Paste it into your coding agent.');
+					} catch {
+						promptRef.current?.focus();
+						promptRef.current?.select();
+						setCopied('Prompt selected. Press Ctrl+C or Command+C to copy.');
+					}
+				}}
+			>
+				Copy bootstrap prompt
+			</button>
+			{copied && <p role="status">{copied}</p>}
 			{!validUrl && (
 				<p role="alert">
 					Enter a gateway origin such as https://gateway.example.com, without credentials, a path or
 					query parameters.
 				</p>
 			)}
-			<div className="button-row">
-				<button
-					type="button"
-					className="button primary"
-					disabled={!validUrl}
-					onClick={() => download('prompt.md', content)}
-				>
-					Download prompt.md
-				</button>
-				<button
-					type="button"
-					className="button"
-					disabled={!validUrl}
-					onClick={async () => {
-						try {
-							await navigator.clipboard.writeText(content);
-							setCopied('Setup prompt copied.');
-						} catch {
-							setCopied('Copy unavailable. Use Download prompt.md.');
-						}
-					}}
-				>
-					Copy setup prompt
-				</button>
-				<button
-					type="button"
-					className="button"
-					disabled={!validUrl}
-					onClick={() => download('rollout.md', rolloutGuide(origin))}
-				>
-					Download rollout.md
-				</button>
-			</div>
-			{copied && <p role="status">{copied}</p>}
 			<details className="schema-details">
-				<summary>Preview setup prompt</summary>
-				<pre className="code-block" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-					{content}
-				</pre>
+				<summary>Options and downloads</summary>
+				<div className="form-grid">
+					<label className="field">
+						<span>Client to configure</span>
+						<select
+							value={client}
+							onChange={event => {
+								setClient(event.target.value);
+								setCopied('');
+							}}
+						>
+							{['This coding agent', 'Claude Code', 'Codex', 'OpenCode'].map(item => (
+								<option key={item}>{item}</option>
+							))}
+						</select>
+					</label>
+					<label className="field">
+						<span>Gateway URL</span>
+						<input
+							value={origin}
+							onChange={event => {
+								setGateway(event.target.value);
+								setCopied('');
+							}}
+						/>
+					</label>
+					<label className="field">
+						<span>Gateway model name (manual override)</span>
+						<input
+							value={model.includes('*') ? specificModel || model : model}
+							onChange={event => {
+								setCatalogSelection(null);
+								setModel(event.target.value);
+								setSpecificModel('');
+								setCopied('');
+							}}
+							placeholder="Optional: exact gateway route name"
+						/>
+					</label>
+				</div>
+				<div className="button-row">
+					<button
+						type="button"
+						className="button"
+						disabled={!validUrl}
+						onClick={() => download('prompt.md', content)}
+					>
+						Download prompt.md
+					</button>
+					<button
+						type="button"
+						className="button"
+						disabled={!validUrl}
+						onClick={() => download('rollout.md', rolloutGuide(origin))}
+					>
+						Download rollout.md
+					</button>
+				</div>
+				<p>
+					Downloads contain no API keys. For multiple machines, use the rollout guide and separate
+					credentials for each user or device.
+				</p>
 			</details>
-			<p>
-				For multiple machines, reuse the shared settings and issue a separate key for each user or
-				device. The rollout guide covers piloting, managed deployment, verification and rollback.
-			</p>
 		</section>
 	);
 }

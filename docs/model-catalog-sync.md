@@ -34,7 +34,8 @@ updated Client Setup configuration. The built-in Help guide covers these steps.
 
 ## Try a prompt
 
-The playground's main **Model** picker searches configured routes and every synced
+A shared **Model** picker in the playground, Getting Started, Client Setup and
+weighted/failover/conditional virtual routing searches configured routes and every synced
 catalog entry. “Opus 5.5” matches punctuation variants; “Codex” also searches
 OpenAI entries. The menu renders the first 100 matches to stay responsive; refine
 the search to reach any entry. A matching explicit route takes precedence over a
@@ -46,9 +47,13 @@ Access, keys and approval checks still run at the gateway.
 ## Machine setup and rollout
 
 **Getting started & help → Get your first model working** includes **Download
-prompt.md**, a copy button, a preview and **Download rollout.md**. Choose the
-client, reachable gateway origin and concrete gateway route. The prompt contains
-only these connection details and instructions; it does not export credentials.
+prompt.md** and **Download rollout.md** under **Options and downloads**. The
+primary action is **Copy bootstrap prompt**, with the short prompt visible and
+**Let my agent choose** selected by default. No settings need to be filled in
+before copying. The optional model picker searches the full catalog. An
+unconfigured choice is included as a setup requirement, never misrepresented as
+a working route. Client and gateway overrides are optional; credentials are not
+exported.
 Give it to a local coding agent to detect the OS/client version, merge settings,
 obtain a device credential locally, test the client and explain rollback.
 
@@ -57,3 +62,17 @@ separate device/user credentials, a pilot for each OS/client, managed distributi
 verification, rotation and rollback. It is a setup aid and rollout plan, not a
 fleet enrollment service or a prebuilt Jamf/Intune/Ansible package. Packaging must
 use the organisation's actual endpoint platform and supported client versions.
+
+## Model-picker audit
+
+The request/setup selectors share GatewayModelPicker rather than independently
+building configured-only lists. CatalogModelSelector already supplies synced
+provider IDs to outgoing-model editors and wildcard fields. Provider aliases
+(Bedrock, Gemini and Vertex) use the same catalog identity when matching routes.
+Unconfigured selections block client recipes and virtual target saves, preventing
+a stale previous model from silently being used.
+
+Read-only configuration dumps describe deployed resources; log filters describe
+observed/configured traffic; API-key patterns refer to gateway request names.
+Those are intentionally scoped inventories, not provider model catalogs. Key
+patterns and moderation model IDs also accept manual values without truncation.

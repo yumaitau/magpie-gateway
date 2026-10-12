@@ -17,7 +17,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { sendChatCompletion, sendMcpJsonRpc } from '@/api/playgroundApi';
 import { claudeSubscriptionWarning } from '@/claudeSubscription';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
-import { PlaygroundModelPicker } from '@/components/PlaygroundModelPicker';
+import { GatewayModelPicker } from '@/components/GatewayModelPicker';
 import {
 	Dropdown,
 	Field,
@@ -613,7 +613,7 @@ export function PlaygroundPage() {
 					<div className="playground-setup-bar">
 						<div className="playground-control-row">
 							<FieldGroup label="Model">
-								<PlaygroundModelPicker
+								<GatewayModelPicker
 									value={selectedModel}
 									models={models}
 									providers={providers}

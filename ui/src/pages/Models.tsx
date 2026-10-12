@@ -15,13 +15,13 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
 import { ConfigDiffSaveActions } from '@/components/ConfigDiffDrawer';
+import { type CatalogSelection, GatewayModelPicker } from '@/components/GatewayModelPicker';
 import { MiniMonacoEditor } from '@/components/MiniMonacoEditor';
 import { catalogModelDraft, ModelCatalogBrowser } from '@/components/ModelCatalogBrowser';
 import { ModelCatalogStatus } from '@/components/ModelCatalogStatus';
 import {
 	ConfirmDialog,
 	Drawer,
-	Dropdown,
 	EmptyState,
 	Field,
 	FieldGroup,
@@ -1457,10 +1457,7 @@ function VirtualModelEditor(props: {
 	function updateConditional(index: number, patch: Partial<ConditionalVirtualTarget>) {
 		setModel(current => {
 			const targets = [...(current.routing.conditional?.targets ?? [])];
-			targets[index] = cleanEmpty({
-				...targets[index],
-				...patch
-			}) as ConditionalVirtualTarget;
+			targets[index] = { ...targets[index], ...patch };
 			return { ...current, routing: { conditional: { targets } } };
 		});
 	}
@@ -1874,6 +1871,7 @@ function VirtualTargetSelector(props: {
 	providers: LlmProvider[];
 	onChange: (model: string) => void;
 }) {
+	const [catalogSelection, setCatalogSelection] = useState<CatalogSelection | null>(null);
 	const selectedModelName = selectedConfiguredModelName(props.targetModel, props.baseModels);
 	const selectedModel = props.baseModels.find(model => model.name === selectedModelName);
 	const wildcard = Boolean(selectedModel && isWildcardModelName(selectedModel.name));
@@ -1886,15 +1884,25 @@ function VirtualTargetSelector(props: {
 	return (
 		<div className="target-field">
 			<span className="target-label">{props.label}</span>
-			<Dropdown
+			<GatewayModelPicker
 				ariaLabel={props.label}
-				value={selectedModelName}
-				searchable
-				options={props.options}
-				placeholder="No configured models"
-				onChange={value => props.onChange(concreteModelName(value, ''))}
+				purpose="routing"
+				value={props.targetModel ? selectedModelName : ''}
+				models={props.baseModels}
+				providers={props.providers}
+				configuredOptions={props.options.map(item => ({
+					value: item.value,
+					label: item.value,
+					searchText: item.searchText ?? item.value
+				}))}
+				catalogSelection={catalogSelection}
+				onCatalogSelection={item => {
+					setCatalogSelection(item);
+					if (item) props.onChange('');
+				}}
+				onSelect={(name, specific) => props.onChange(specific ?? concreteModelName(name, ''))}
 			/>
-			{wildcard ? (
+			{!catalogSelection && wildcard ? (
 				<div className="target-resolved-composite">
 					{wildcardPrefix ? <span className="target-prefix">{wildcardPrefix}</span> : null}
 					<CatalogModelSelector
