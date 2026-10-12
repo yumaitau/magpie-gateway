@@ -242,3 +242,75 @@ test('synced models follow provider endpoints and remain manually selectable', a
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  }
 });
+
+
+test('playground searches all models and getting started downloads a secret-free setup kit', async ({page}) => {
+ await login(page);
+ const config={llm:{models:[
+  {name:'claude-friendly',provider:'anthropic',params:{model:'claude-opus-5-5'}},
+  {name:'codex/*',provider:'openai'}
+ ],keys:[{name:'private-fixture-key',key:'never-export-this-secret'}]},binds:[]};
+ await page.route('**/api/config',r=>r.fulfill({json:config}));
+ await page.route('**/api/config/effective',r=>r.fulfill({json:config}));
+ const catalog={syncedAt:'2026-10-12T00:00:00Z',intervalSeconds:3600,canSync:true,error:null,providers:[
+  {provider:'anthropic',name:'Anthropic',models:['claude-opus-5-5']},
+  {provider:'openai',name:'OpenAI',models:['gpt-new-fixture']},
+  {provider:'xai',name:'xAI',models:['grok-unconfigured-fixture']},
+  {provider:'opencode',name:'OpenCode',models:Array.from({length:130},(_,i)=>`zen-fixture-${i}`)}
+ ]};
+ await page.route('**/api/magpie/model-catalog',r=>r.fulfill({json:catalog}));
+ await page.goto(`${base}/ui/llm/playground`);
+ async function selectCatalog(search,option) {
+  await page.getByRole('combobox',{name:'Model',exact:true}).click();
+  await page.getByRole('combobox',{name:'Search Model',exact:true}).fill(search);
+  await page.getByRole('option',{name:option}).click();
+ }
+ await selectCatalog('Opus 5.5',/^claude-opus-5-5/);
+ await expect(page.getByRole('combobox',{name:'Model',exact:true})).toContainText('claude-friendly');
+ await selectCatalog('Codex',/^gpt-new-fixture/);
+ await expect(page.getByRole('textbox',{name:'Specific model',exact:true})).toHaveValue('gpt-new-fixture');
+ let sentModel='';
+ await page.route('**/v1/chat/completions',r=> { sentModel=r.request().postDataJSON().model; return r.fulfill({json:{choices:[{message:{role:'assistant',content:'ready'}}]}}); });
+ await page.getByRole('textbox',{name:'User message',exact:true}).fill('Reply ready');
+ await page.getByRole('button',{name:'Send',exact:true}).click();
+ await expect(page.locator('.chat-message.assistant')).toContainText('ready');
+ expect(sentModel).toBe('codex/gpt-new-fixture');
+ await selectCatalog('zen-fixture-129',/^zen-fixture-129/);
+ await expect(page.getByRole('link',{name:'Set up this model'})).toBeVisible();
+ await selectCatalog('grok',/^grok-unconfigured-fixture/);
+ await expect(page.getByText('Model responded successfully. You can now connect your app.',{exact:true})).toHaveCount(0);
+ await page.getByRole('textbox',{name:'User message',exact:true}).fill('Reply ready');
+ await expect(page.getByRole('button',{name:'Send',exact:true})).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Test connection',exact:true})).toBeDisabled();
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.getByRole('link',{name:'Set up this model'}).click();
+ const drawer=page.getByRole('dialog',{name:'Add model',exact:true});
+ await expect(drawer).toContainText('grok-unconfigured-fixture');
+ await page.goto(`${base}/ui/help/start`);
+ await page.getByLabel('Client to configure').selectOption('Codex');
+ await page.getByLabel('Gateway model name').fill('codex/gpt-new-fixture');
+ await page.getByLabel('Gateway URL',{exact:true}).fill('https://gateway.example.test');
+ for (const name of ['prompt.md','rollout.md']) {
+  const pending=page.waitForEvent('download');
+  await page.getByRole('button',{name:`Download ${name}`,exact:true}).click();
+  const download=await pending;
+  expect(download.suggestedFilename()).toBe(name);
+  const text=require('node:fs').readFileSync(await download.path(),'utf8');
+  expect(text).toContain('https://gateway.example.test');
+  expect(text).not.toContain('never-export-this-secret');
+  if(name==='prompt.md') { expect(text).toContain('codex/gpt-new-fixture'); expect(text).toContain('MAGPIE_API_KEY'); expect(text).toContain('wire_api = "responses"'); }
+  else { expect(text).toContain('rollback'); expect(text).toContain('separate virtual API key'); }
+ }
+ await page.getByText('Preview setup prompt',{exact:true}).click();
+ for(const width of [1440,390]) {
+  await page.setViewportSize({width,height:900});
+  const axe=await new AxeBuilder({page}).withTags(tags).analyze();expect(axe.violations,JSON.stringify(axe.violations)).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }
+ await page.getByLabel('Gateway URL',{exact:true}).fill('https://user:secret@example.test');
+ await expect(page.getByRole('button',{name:'Download prompt.md',exact:true})).toBeDisabled();
+});

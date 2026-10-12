@@ -48,28 +48,7 @@ export function ModelCatalogBrowser(props: {
 	const current = Math.min(page, Math.max(0, Math.ceil(rows.length / size) - 1));
 	const total = catalog.data?.providers.reduce((count, item) => count + item.models.length, 0) ?? 0;
 	function configure(source: string, model: string) {
-		const shared = props.providers.find(
-			item => modelCatalogProvider(item, props.providers) === source
-		);
-		const native: Record<string, LlmModel['provider']> = {
-			anthropic: 'anthropic',
-			openai: 'openai',
-			'aws.bedrock': 'bedrock',
-			'gcp.gemini': 'gemini',
-			'gcp.vertex_ai': 'vertex',
-			copilot: 'copilot',
-			azure: 'azure'
-		};
-		let name = `${source}/${model}`;
-		let suffix = 2;
-		while (props.configuredNames.includes(name)) name = `${source}/${model}-${suffix++}`;
-		// Reuse a configured connection without copying its credentials into the model.
-		props.onConfigure({
-			...makeEmptyModel(),
-			name,
-			provider: shared ? { reference: shared.name } : (native[source] ?? null),
-			params: { model }
-		} as LlmModel);
+		props.onConfigure(catalogModelDraft(source, model, props.providers, props.configuredNames));
 	}
 	return (
 		<section className="panel" aria-label="Browse model catalog">
@@ -183,4 +162,32 @@ export function ModelCatalogBrowser(props: {
 			) : null}
 		</section>
 	);
+}
+
+export function catalogModelDraft(
+	source: string,
+	model: string,
+	providers: LlmProvider[],
+	configuredNames: string[]
+): LlmModel {
+	const shared = providers.find(item => modelCatalogProvider(item, providers) === source);
+	const native: Record<string, LlmModel['provider']> = {
+		anthropic: 'anthropic',
+		openai: 'openai',
+		'aws.bedrock': 'bedrock',
+		'gcp.gemini': 'gemini',
+		'gcp.vertex_ai': 'vertex',
+		copilot: 'copilot',
+		azure: 'azure'
+	};
+	let name = `${source}/${model}`;
+	let suffix = 2;
+	while (configuredNames.includes(name)) name = `${source}/${model}-${suffix++}`;
+	// Reuse a configured connection without copying its credentials into the model.
+	return {
+		...makeEmptyModel(),
+		name,
+		provider: shared ? { reference: shared.name } : (native[source] ?? null),
+		params: { model }
+	} as LlmModel;
 }

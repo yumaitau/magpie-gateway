@@ -27,7 +27,7 @@ export function QuickStart(props: {
 					<p>Connect a provider, try a prompt, then use the gateway in your app.</p>
 					{isMagpie && (
 						<Link to="/help/$topic" params={{ topic: 'start' }}>
-							Follow the step-by-step setup guide
+							Get setup prompt.md and step-by-step help
 						</Link>
 					)}
 				</div>

@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { useState } from 'react';
 
 import { PageHeader } from '@/components/Primitives';
+import { SetupPromptDownload } from '@/components/SetupPromptDownload';
 
 type Step = { title: string; body: string; to?: string; link?: string };
 type Guide = { id: string; title: string; description: string; steps: Step[]; done: string };
@@ -32,7 +33,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Connect your app',
-				body: 'Open Client Setup. Select your app or SDK, model, gateway base URL and gateway key. Copy the generated settings into your app, send a request and confirm it worked.',
+				body: 'Download prompt.md above and give it to your local coding agent for guided machine setup. For manual setup, open Client Setup. Select your app or SDK, model, gateway base URL and gateway key. Copy the generated settings into your app, send a request and confirm it worked.',
 				to: '/llm/client-setup',
 				link: 'Open Client Setup'
 			},
@@ -44,6 +45,27 @@ const guides: Guide[] = [
 			}
 		],
 		done: 'You have received a response through the gateway from your own app. Home remembers model tests and confirmed app connections in this browser.'
+	},
+	{
+		id: 'rollout',
+		title: 'Roll out to multiple machines',
+		description:
+			'Reuse a central gateway and shared settings while keeping device credentials separate.',
+		steps: [
+			{
+				title: 'Prepare a pilot',
+				body: 'Download rollout.md above. Inventory the operating systems and clients, configure approved routes, and test one machine per client and OS.'
+			},
+			{
+				title: 'Package the verified setup',
+				body: 'Use prompt.md for individual setup. For managed deployment, package the tested client settings and repeatable scripts in your existing device-management tool. Issue keys separately; never bundle a shared secret.'
+			},
+			{
+				title: 'Verify and expand',
+				body: 'Check responses, streaming, tools, audit records and expected policy denials. Record results, roll out in small groups and retain backups for rollback.'
+			}
+		],
+		done: 'Each enrolled client succeeds with its own credential, expected policy checks pass, and an administrator can rotate or revoke a device key.'
 	},
 	{
 		id: 'model-sync',
@@ -63,7 +85,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Select or type a model',
-				body: 'Open Models → All catalog models to browse every provider, even those not yet connected. Search by name, such as Opus 5.5 or Codex, and press Configure to start a draft. Configured routes shows only routes already added to your gateway. Existing wildcard routes can choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
+				body: 'Open Models → All catalog models to browse every provider, even those not yet connected. Search by name, such as Opus 5.5 or Codex, and press Configure to start a draft. Configured routes shows only routes already added to your gateway. Chat Playground’s main Model picker also searches the full catalog. It selects a matching configured route or offers Set up this model. Existing wildcard routes can also choose a Specific model in Chat Playground or Client Setup. A model missing from the public catalog can still be typed by its exact provider ID. Sync does not change cost rates or the models advertised by the gateway discovery endpoint.'
 			},
 			{
 				title: 'Verify access and connect',
@@ -462,6 +484,7 @@ export function HelpPage() {
 				title="Getting started & help"
 				description="Follow a guide, learn what a setting does, or find the next step when something fails."
 			/>
+			{!term && ['start', 'clients', 'rollout'].includes(guide.id) && <SetupPromptDownload />}
 			<label htmlFor="help-search">Search guides and options</label>
 			<input
 				id="help-search"

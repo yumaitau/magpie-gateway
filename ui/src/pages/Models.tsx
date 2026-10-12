@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
 import { ConfigDiffSaveActions } from '@/components/ConfigDiffDrawer';
 import { MiniMonacoEditor } from '@/components/MiniMonacoEditor';
-import { ModelCatalogBrowser } from '@/components/ModelCatalogBrowser';
+import { catalogModelDraft, ModelCatalogBrowser } from '@/components/ModelCatalogBrowser';
 import { ModelCatalogStatus } from '@/components/ModelCatalogStatus';
 import {
 	ConfirmDialog,
@@ -176,7 +176,21 @@ function ModelsEditorPage() {
 	const activeEditing =
 		editing ??
 		(modelHash?.kind === 'add' && modelHash.type === 'model'
-			? { model: makeEmptyModel() }
+			? {
+					model: (() => {
+						const search = new URLSearchParams(window.location.search);
+						const source = search.get('catalogProvider');
+						const model = search.get('catalogModel');
+						return source && model
+							? catalogModelDraft(
+									source,
+									model,
+									providers,
+									[...models, ...virtualModels].map(item => item.name)
+								)
+							: makeEmptyModel();
+					})()
+				}
 			: null) ??
 		(hashEditModel
 			? {
@@ -601,7 +615,7 @@ function ModelsEditorPage() {
 				</Panel>
 			) : null}
 
-			{activeEditing ? (
+			{activeEditing && !isLoading && !error ? (
 				<ModelEditor
 					key={activeEditing.previousId ?? 'new'}
 					previousId={activeEditing.previousId}

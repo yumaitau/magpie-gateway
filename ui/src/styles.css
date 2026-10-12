@@ -4527,7 +4527,7 @@ textarea {
 	border: 1px solid color-mix(in srgb, var(--warn) 32%, var(--line));
 	border-radius: 999px;
 	background: var(--warn-bg);
-	color: var(--warn);
+	color: var(--text);
 	padding: 3px 8px;
 	font-size: 12px;
 	font-weight: 600;

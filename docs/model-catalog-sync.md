@@ -31,3 +31,29 @@ cost rates or alter the proxy's `/v1/models` response. Configure an explicit rou
 or select a concrete model on an existing wildcard route, obtain required
 approval and test the connection. Coding tools which cache a model list may need
 updated Client Setup configuration. The built-in Help guide covers these steps.
+
+## Try a prompt
+
+The playground's main **Model** picker searches configured routes and every synced
+catalog entry. “Opus 5.5” matches punctuation variants; “Codex” also searches
+OpenAI entries. The menu renders the first 100 matches to stay responsive; refine
+the search to reach any entry. A matching explicit route takes precedence over a
+provider wildcard. Choosing a catalog model on a wildcard fills its concrete
+request name. Entries without a matching route show **Setup required** and link
+to a prefilled draft; sending remains disabled until a configured route is selected.
+Access, keys and approval checks still run at the gateway.
+
+## Machine setup and rollout
+
+**Getting started & help → Get your first model working** includes **Download
+prompt.md**, a copy button, a preview and **Download rollout.md**. Choose the
+client, reachable gateway origin and concrete gateway route. The prompt contains
+only these connection details and instructions; it does not export credentials.
+Give it to a local coding agent to detect the OS/client version, merge settings,
+obtain a device credential locally, test the client and explain rollback.
+
+The rollout guide describes a central gateway, versioned client settings,
+separate device/user credentials, a pilot for each OS/client, managed distribution,
+verification, rotation and rollback. It is a setup aid and rollout plan, not a
+fleet enrollment service or a prebuilt Jamf/Intune/Ansible package. Packaging must
+use the organisation's actual endpoint platform and supported client versions.

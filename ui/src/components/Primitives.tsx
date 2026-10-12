@@ -62,6 +62,8 @@ export function useDismissiblePopover<T extends HTMLElement>(open: boolean, onCl
 }
 
 export function Dropdown(props: {
+	resultLimit?: number;
+	searchMatcher?: (value: string, query: string) => boolean;
 	value: string;
 	options: Array<{
 		value: string;
@@ -90,11 +92,19 @@ export function Dropdown(props: {
 	const selected =
 		props.options.find(option => option.value === props.value) ??
 		(props.allowEmpty ? undefined : props.options[0]);
-	const filteredOptions = useMemo(() => {
+	const matchingOptions = useMemo(() => {
 		if (!props.searchable || !query.trim()) return props.options;
 		const normalized = query.trim().toLowerCase();
-		return props.options.filter(option => optionSearchText(option).includes(normalized));
-	}, [props.options, props.searchable, query]);
+		return props.options.filter(option =>
+			props.searchMatcher
+				? props.searchMatcher(optionSearchText(option), normalized)
+				: optionSearchText(option).includes(normalized)
+		);
+	}, [props.options, props.searchable, props.searchMatcher, query]);
+	const filteredOptions = useMemo(
+		() => (props.resultLimit ? matchingOptions.slice(0, props.resultLimit) : matchingOptions),
+		[matchingOptions, props.resultLimit]
+	);
 	const activeOption = open ? filteredOptions[activeIndex] : undefined;
 	const activeOptionId = activeOption ? `${id}-option-${activeIndex}` : undefined;
 
@@ -287,6 +297,12 @@ export function Dropdown(props: {
 							placeholder={`Search ${props.ariaLabel.toLowerCase()}...`}
 						/>
 					) : null}
+					{matchingOptions.length > filteredOptions.length && (
+						<div className="custom-select-empty">
+							Showing first {filteredOptions.length} of {matchingOptions.length.toLocaleString()}{' '}
+							matches. Search to narrow the list.
+						</div>
+					)}
 					{filteredOptions.map((option, index) => (
 						// biome-ignore lint/a11y/useKeyWithClickEvents: Existing lint violation; remove this suppression when the underlying issue is fixed.
 						<div

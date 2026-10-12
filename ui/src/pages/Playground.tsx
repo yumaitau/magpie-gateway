@@ -17,6 +17,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { sendChatCompletion, sendMcpJsonRpc } from '@/api/playgroundApi';
 import { claudeSubscriptionWarning } from '@/claudeSubscription';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
+import { PlaygroundModelPicker } from '@/components/PlaygroundModelPicker';
 import {
 	Dropdown,
 	Field,
@@ -127,6 +128,10 @@ export function PlaygroundPage() {
 		error: configDataError
 	} = useLlmConfigData();
 	const mcpData = useMcpConfigData();
+	const [catalogSelection, setCatalogSelection] = useState<{
+		provider: string;
+		model: string;
+	} | null>(null);
 	const upsertPolicy = useUpsertPolicyResource();
 	const modelOptions = useMemo(
 		() => [
@@ -179,12 +184,9 @@ export function PlaygroundPage() {
 	const selectedModelOption = modelOptions.find(item => item.name === selectedModel);
 	const selectedModelConfig =
 		selectedModelOption?.kind === 'model' ? selectedModelOption.config : undefined;
-	const displayRequestModel = playgroundRequestModel(
-		selectedModelOption,
-		selectedModel,
-		specificModel,
-		providers
-	);
+	const displayRequestModel = catalogSelection
+		? ''
+		: playgroundRequestModel(selectedModelOption, selectedModel, specificModel, providers);
 	const wildcardPrefix =
 		selectedModelConfig && isWildcardModelName(selectedModelConfig.name)
 			? wildcardModelPrefix(selectedModelConfig.name)
@@ -308,7 +310,7 @@ export function PlaygroundPage() {
 	}
 
 	async function testConnection() {
-		if (loading || !displayRequestModel) return;
+		if (loading || !displayRequestModel || configDataLoading || configDataError) return;
 		markSetupStep('testedModel', '');
 		setLoading(true);
 		setError(null);
@@ -334,7 +336,7 @@ export function PlaygroundPage() {
 
 	async function send() {
 		const userMessage = prompt.trim();
-		if (!userMessage) return;
+		if (!userMessage || sendBlockers.length || configDataLoading || configDataError) return;
 		const userChatMessage: ChatMessage = { role: 'user', content: userMessage };
 		const outboundMessages: ChatMessage[] = [
 			...(system.trim() ? [{ role: 'system' as const, content: system.trim() }] : []),
@@ -523,7 +525,7 @@ export function PlaygroundPage() {
 			<PageHeader title="LLM Playground" description="Send test requests through the gateway." />
 			<div className="panel">
 				<p>
-					{progress.testedModel === selectedModel
+					{!catalogSelection && progress.testedModel === selectedModel
 						? 'Model responded successfully. You can now connect your app.'
 						: 'Check your provider credentials with a short test request. Provider usage charges may apply.'}
 				</p>
@@ -611,22 +613,26 @@ export function PlaygroundPage() {
 					<div className="playground-setup-bar">
 						<div className="playground-control-row">
 							<FieldGroup label="Model">
-								<Dropdown
-									ariaLabel="Model"
+								<PlaygroundModelPicker
 									value={selectedModel}
-									placeholder="No models"
-									searchable
-									options={modelOptions.map(item => ({
+									models={models}
+									providers={providers}
+									configuredOptions={modelOptions.map(item => ({
 										value: item.name,
 										label: item.name,
-										description: item.kind === 'virtual' ? 'Virtual model' : undefined,
-										icon: item.icon,
 										searchText: item.searchText
 									}))}
-									onChange={setModel}
+									catalogSelection={catalogSelection}
+									onCatalogSelection={setCatalogSelection}
+									onSelect={(name, specific) => {
+										setModel(name);
+										if (specific !== undefined) setSpecificModel(specific);
+									}}
 								/>
 							</FieldGroup>
-							{selectedModelConfig && isWildcardModelName(selectedModelConfig.name) ? (
+							{!catalogSelection &&
+							selectedModelConfig &&
+							isWildcardModelName(selectedModelConfig.name) ? (
 								<FieldGroup
 									label="Specific model"
 									hint="Model uses a wildcard; specify the specific model."
