@@ -175,10 +175,6 @@ jobs:
           image: magpie-gateway-portal:ci
           format: cyclonedx-json
           output-file: magpie-portal.cdx.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: magpie-portal-sbom
-          path: magpie-portal.cdx.json
       - name: Scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

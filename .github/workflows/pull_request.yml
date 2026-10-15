@@ -64,12 +64,6 @@ jobs:
         KEYCLOAK_AVAILABLE: ${{ matrix.os == 'ubuntu-24.04' && '1' || '' }}
         # Generate Cargo's per-crate build report for the artifact below.
         TIMINGS: true
-    - name: Upload cargo timings
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: cargo-timings-proxy-test-${{ runner.os }}
-        path: target/cargo-timings/cargo-timing*.html
-        retention-days: 2
     - name: Stop validation dependencies
       if: ${{ always() && matrix.os == 'ubuntu-24.04' }}
       run: tools/manage-validation-deps.sh stop
@@ -115,13 +109,6 @@ jobs:
       run: pnpm exec playwright install --with-deps chromium
     - name: End-to-end tests
       run: pnpm test:e2e
-    - name: Upload Playwright traces
-      if: failure()
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: playwright-ui-traces
-        path: ui/test-results
-        retention-days: 2
 
   #### Controller jobs ####
   controller-test:
@@ -185,19 +172,6 @@ jobs:
         CGO_ENABLED=0 PERSIST_INSTALL=true go test -trimpath -tags=e2e,agent,disable_pgv -v ./controller/test/e2e
     - name: Verify Kind images
       run: TEST_MODE=e2e ./controller/test/setup/verify-kind-images.sh
-    - name: Archive bug report directory on failure
-      if: ${{ failure() }}
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: bug-report
-        path: ./controller/_test/bug_report/kind
-        retention-days: 2
-    - name: Upload cargo timings
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: cargo-timings-e2e
-        path: target/cargo-timings/cargo-timing*.html
-        retention-days: 2
     - name: Summary
       run: |
         echo '# E2E Timings\n'
@@ -229,12 +203,6 @@ jobs:
         kubectl describe deployment -A
         kubectl get pods -A
         kubectl logs -n agentgateway-system -l app.kubernetes.io/name=agentgateway
-    - name: Upload cargo timings
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: cargo-timings-conformance
-        path: target/cargo-timings/cargo-timing*.html
-        retention-days: 2
     - name: Summary
       run: |
         cat-yamls () {
@@ -283,12 +251,6 @@ jobs:
         kubectl describe deployment -A
         kubectl get pods -A
         kubectl logs -n agentgateway-system -l app.kubernetes.io/name=agentgateway
-    - name: Upload cargo timings
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      with:
-        name: cargo-timings-gie-conformance
-        path: target/cargo-timings/cargo-timing*.html
-        retention-days: 2
     - name: Summary
       run: |
         cat-yamls () {
