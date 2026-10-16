@@ -325,3 +325,10 @@
 	text-decoration: underline;
 	text-underline-offset: 3px;
 }
+
+.pool-model-list {
+	display: grid;
+	gap: 4px;
+	max-height: 240px;
+	overflow-y: auto;
+}

@@ -107,6 +107,37 @@ impl Store {
 		Ok(())
 	}
 
+	/// Remove a pool with its subscriptions and keys; refused while requests hold leases.
+	pub fn delete_subscription_pool(&self, id: &str, actor: &str) -> Result<()> {
+		let tx = self.conn.unchecked_transaction()?;
+		self.conn.execute(
+			"DELETE FROM pool_leases WHERE expires_at<=?1",
+			[chrono::Utc::now().timestamp()],
+		)?;
+		if self.conn.query_row(
+			"SELECT COUNT(*) FROM pool_leases WHERE subscription_id IN (SELECT id FROM pool_subscriptions WHERE pool_id=?1)",
+			[id],
+			|r| r.get::<_, i64>(0),
+		)? > 0
+		{
+			return Err(crate::Error::Msg(
+				"Wait for active requests before deleting the pool.".into(),
+			));
+		}
+		self
+			.conn
+			.execute("DELETE FROM pool_keys WHERE pool_id=?1", [id])?;
+		self
+			.conn
+			.execute("DELETE FROM pool_subscriptions WHERE pool_id=?1", [id])?;
+		self
+			.conn
+			.execute("DELETE FROM subscription_pools WHERE id=?1", [id])?;
+		self.pool_audit(actor, "pool deleted", id)?;
+		tx.commit()?;
+		Ok(())
+	}
+
 	pub fn pool_members(&self, pool_id: &str, now: i64) -> Result<Vec<Member>> {
 		let mut q = self.conn.prepare(
 			"SELECT body,last_used,cooldown_until,status,

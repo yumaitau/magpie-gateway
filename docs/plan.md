@@ -262,8 +262,9 @@ pretend the database is a WORM device.
 
 Sinks build the request body for OTLP logs, Microsoft Sentinel Logs
 Ingestion, Splunk HEC, an OCSF object for S3 or Security Lake, and an
-RFC 5424 syslog line. Delivery is attempted only when that sink is
-configured. Tests check the payload shape against a local recorder.
+RFC 5424 syslog line. Tests check the payload shape against a local
+recorder. The portal delivers OTLP logs; the other bodies are not yet
+sent anywhere. See [Audit export with OpenTelemetry](audit-otel.md).
 
 Detection content in `detections/` is written for this schema. The
 public pack at `yumaitau/ai-agent-threat-detection` does not contain a

@@ -15,8 +15,10 @@ Connect Claude using a subscription token generated locally with
 `claude setup-token`. Connect ChatGPT using the contents of `~/.codex/auth.json`
 after a local `codex login`; API-key logins are refused. Credentials are imported
 only through the authenticated console; the service never reads local CLI logins.
-Enter the exact model IDs that subscription can use. The provider checks model
-entitlements when a request arrives. A repeated credential cannot be connected
+Choose the models that subscription can use from the synced model catalogue
+(Anthropic models for Claude, OpenAI models for Codex), or add an exact model ID
+the catalogue lacks. The provider checks model entitlements when a request
+arrives. A repeated credential cannot be connected
 twice; Codex accounts are also deduplicated by ChatGPT account ID.
 
 Choose explicit models and a lifetime of 1–365 days when issuing a key. The raw
@@ -24,9 +26,16 @@ key is returned once, with `Cache-Control: no-store`; only its SHA-256 hash is
 saved. Keys grant inference access to that pool and its selected models, with
 no access to management APIs or provider credentials. They are separate from the
 main gateway's Virtual API Keys. Making a shared pool private invalidates access
-for colleagues' keys; disabling the pool stops all new requests. Revoking a key,
+for colleagues' keys; disabling the pool stops all new requests. Pool names are
+unique, ignoring case. The owner can delete a pool once no requests are in
+flight; deletion removes its subscriptions and every key issued for it. Revoking a key,
 expiring it, or disabling its owner's portal account prevents new requests.
 Already-started requests may finish.
+
+Each request records a `forward` audit event when it is assigned to a
+subscription, and a `complete` event with the provider's token usage once the
+response finishes. Both carry the client's session header and `traceparent`,
+so they can be exported with the [OpenTelemetry audit export](audit-otel.md).
 
 ## Client configuration
 

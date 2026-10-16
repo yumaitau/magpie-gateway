@@ -18,7 +18,8 @@ test('pool owners connect subscriptions, issue scoped keys, and revoke access', 
   await expect(pool).toBeVisible();
   await pool.getByRole('button', { name: 'Connect subscription', exact: true }).click();
   await pool.getByLabel('Subscription name', { exact: true }).fill('Claude fixture');
-  await pool.getByLabel('Model IDs (one per line)', { exact: true }).fill('claude-fixture');
+  await pool.getByLabel('Other model ID', { exact: true }).fill('claude-fixture');
+  await pool.getByRole('button', { name: 'Add model', exact: true }).click();
   await pool.getByLabel('Claude setup-token', { exact: true }).fill(`sk-ant-oat01-${Date.now()}${'x'.repeat(40)}`);
   await pool.getByRole('button', { name: 'Save subscription', exact: true }).click();
   await expect(pool.getByRole('button', { name: 'Edit or reconnect Claude fixture' })).toBeVisible();

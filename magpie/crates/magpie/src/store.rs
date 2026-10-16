@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
   model TEXT NOT NULL,
   decision TEXT NOT NULL,
   reason TEXT NOT NULL,
-  detail TEXT NOT NULL
+  detail TEXT NOT NULL,
+  telemetry TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TRIGGER IF NOT EXISTS audit_events_no_update
 BEFORE UPDATE ON audit_events
@@ -104,8 +105,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
   model TEXT NOT NULL,
   decision TEXT NOT NULL,
   reason TEXT NOT NULL,
-  detail TEXT NOT NULL
+  detail TEXT NOT NULL,
+  telemetry TEXT NOT NULL DEFAULT '{}'
 );
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS telemetry TEXT NOT NULL DEFAULT '{}';
 CREATE OR REPLACE FUNCTION magpie_audit_immutable() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION 'audit events are immutable';
@@ -166,6 +169,17 @@ impl Store {
 
 	pub fn migrate(&self) -> Result<()> {
 		self.conn.execute_batch(SQLITE_SCHEMA)?;
+		// Databases created before telemetry columns gain them without rewriting audit rows.
+		let has_telemetry: bool = self.conn.query_row(
+			"SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name='telemetry'",
+			[],
+			|r| r.get(0),
+		)?;
+		if !has_telemetry {
+			self.conn.execute_batch(
+				"ALTER TABLE audit_events ADD COLUMN telemetry TEXT NOT NULL DEFAULT '{}'",
+			)?;
+		}
 		self.migrate_accounts()?;
 		self.conn.execute_batch(crate::alerts::SCHEMA)?;
 		self.conn.execute_batch(crate::pools::SCHEMA)?;
@@ -477,8 +491,8 @@ impl Store {
 
 	pub fn append_audit(&self, event: &AuditEvent) -> Result<()> {
 		self.conn.execute(
-			"INSERT INTO audit_events (id, at, kind, actor, agent_id, tool, model, decision, reason, detail)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+			"INSERT INTO audit_events (id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
 			params![
 				event.id,
 				event.at.to_rfc3339(),
@@ -489,15 +503,45 @@ impl Store {
 				event.model,
 				event.decision,
 				event.reason,
-				event.detail.to_string()
+				event.detail.to_string(),
+				serde_json::to_string(&event.telemetry)?
 			],
+		)?;
+		Ok(())
+	}
+
+	/// Audit events appended after the export cursor, oldest first, with each row's position.
+	/// A new cursor starts at the newest event, so enabling export does not replay history.
+	pub fn audit_export_batch(&self, limit: usize) -> Result<Vec<(i64, AuditEvent)>> {
+		self.conn.execute(
+			"INSERT OR IGNORE INTO runtime_settings VALUES ('audit_export_cursor', (SELECT COALESCE(MAX(rowid),0) FROM audit_events))",
+			[],
+		)?;
+		let mut statement = self.conn.prepare(
+			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry, rowid
+			 FROM audit_events
+			 WHERE rowid > (SELECT CAST(value AS INTEGER) FROM runtime_settings WHERE name='audit_export_cursor')
+			 ORDER BY rowid LIMIT ?1",
+		)?;
+		let mut rows = statement.query([limit as i64])?;
+		let mut events = Vec::new();
+		while let Some(row) = rows.next()? {
+			events.push((row.get(11)?, read_audit(row)?));
+		}
+		Ok(events)
+	}
+
+	pub fn advance_audit_export(&self, position: i64) -> Result<()> {
+		self.conn.execute(
+			"UPDATE runtime_settings SET value=?1 WHERE name='audit_export_cursor'",
+			[position.to_string()],
 		)?;
 		Ok(())
 	}
 
 	pub fn search_audit(&self, query: &AuditQuery) -> Result<Vec<AuditEvent>> {
 		let mut statement = self.conn.prepare(
-			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail
+			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry
 			 FROM audit_events ORDER BY at DESC",
 		)?;
 		let mut rows = statement.query([])?;
@@ -619,6 +663,7 @@ fn read_revision(row: &rusqlite::Row<'_>) -> Result<Revision> {
 pub(crate) fn read_audit(row: &rusqlite::Row<'_>) -> Result<AuditEvent> {
 	let at: String = row.get(1)?;
 	let detail: String = row.get(9)?;
+	let telemetry: String = row.get(10)?;
 	Ok(AuditEvent {
 		id: row.get(0)?,
 		at: DateTime::parse_from_rfc3339(&at)
@@ -632,6 +677,7 @@ pub(crate) fn read_audit(row: &rusqlite::Row<'_>) -> Result<AuditEvent> {
 		decision: row.get(7)?,
 		reason: row.get(8)?,
 		detail: serde_json::from_str(&detail)?,
+		telemetry: serde_json::from_str(&telemetry)?,
 	})
 }
 
@@ -767,6 +813,43 @@ mod tests {
 				.len(),
 			1
 		);
+	}
+
+	#[test]
+	fn audit_telemetry_survives_upgrade_and_export_resumes_after_the_cursor() {
+		let path = std::env::temp_dir().join(format!("magpie-audit-{}.sqlite", crate::new_id()));
+		let conn = rusqlite::Connection::open(&path).unwrap();
+		conn.execute_batch(
+			"CREATE TABLE audit_events (id TEXT PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL,
+			 actor TEXT NOT NULL, agent_id TEXT NOT NULL, tool TEXT NOT NULL, model TEXT NOT NULL,
+			 decision TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL);
+			 INSERT INTO audit_events VALUES ('old', '2026-01-01T00:00:00+00:00', 'login', 'a', '', '', '', 'allow', 'old', '{}');",
+		)
+		.unwrap();
+		drop(conn);
+		let store = Store::open_path(path.to_str().unwrap()).unwrap();
+		let old = store.search_audit(&AuditQuery::default()).unwrap();
+		assert_eq!(old[0].telemetry, crate::audit::Telemetry::default());
+		assert!(store.audit_export_batch(10).unwrap().is_empty());
+		let mut event = AuditEvent::new(
+			"decision",
+			"a",
+			"agent",
+			"",
+			"m",
+			"allow",
+			"new",
+			serde_json::json!({}),
+		);
+		event.telemetry.conversation_id = "session-1".into();
+		store.append_audit(&event).unwrap();
+		let batch = store.audit_export_batch(10).unwrap();
+		assert_eq!(batch.len(), 1);
+		assert_eq!(batch[0].1.telemetry.conversation_id, "session-1");
+		store.advance_audit_export(batch[0].0).unwrap();
+		assert!(store.audit_export_batch(10).unwrap().is_empty());
+		drop(store);
+		std::fs::remove_file(path).unwrap();
 	}
 
 	#[test]

@@ -1,4 +1,5 @@
 //! Audit sink payloads. Nothing is sent unless the portal is given a URL.
+//! The portal delivers OTLP when the standard `OTEL_EXPORTER_OTLP_*` variables name an endpoint.
 //!
 //! The OCSF object is a subset shaped for Security Lake style storage. It is
 //! not a certified OCSF mapping. Sentinel and Splunk bodies follow the public
@@ -39,29 +40,64 @@ fn detail_for(event: &AuditEvent, capture_payloads: bool) -> Value {
 	}
 }
 
-pub fn otlp_log(event: &AuditEvent, capture_payloads: bool) -> Value {
+/// One OTLP/JSON logs request. Attribute names follow the OpenTelemetry GenAI
+/// semantic conventions; policy fields that have no convention use `magpie.*`.
+pub fn otlp_logs(events: &[AuditEvent], capture_payloads: bool) -> Value {
 	json!({
 		"resourceLogs": [{
 			"resource": { "attributes": [{ "key": "service.name", "value": { "stringValue": "magpie-gateway" } }] },
 			"scopeLogs": [{
 				"scope": { "name": "magpie.audit" },
-				"logRecords": [{
-					"timeUnixNano": event.at.timestamp_nanos_opt().unwrap_or(0).to_string(),
-					"severityText": "INFO",
-					"body": { "stringValue": event.reason },
-					"attributes": [
-						{ "key": "magpie.kind", "value": { "stringValue": event.kind } },
-						{ "key": "enduser.id", "value": { "stringValue": event.actor } },
-						{ "key": "magpie.agent", "value": { "stringValue": event.agent_id } },
-						{ "key": "magpie.tool", "value": { "stringValue": event.tool } },
-						{ "key": "magpie.model", "value": { "stringValue": event.model } },
-						{ "key": "magpie.decision", "value": { "stringValue": event.decision } },
-						{ "key": "magpie.detail", "value": { "stringValue": detail_for(event, capture_payloads).to_string() } }
-					]
-				}]
+				"logRecords": events.iter().map(|event| otlp_record(event, capture_payloads)).collect::<Vec<_>>()
 			}]
 		}]
 	})
+}
+
+pub fn otlp_log(event: &AuditEvent, capture_payloads: bool) -> Value {
+	otlp_logs(std::slice::from_ref(event), capture_payloads)
+}
+
+fn otlp_record(event: &AuditEvent, capture_payloads: bool) -> Value {
+	let t = &event.telemetry;
+	let mut attributes = Vec::new();
+	for (key, value) in [
+		("gen_ai.operation.name", t.operation.as_str()),
+		("gen_ai.provider.name", &t.provider),
+		("gen_ai.request.model", &event.model),
+		("gen_ai.agent.id", &event.agent_id),
+		("gen_ai.tool.name", &event.tool),
+		("gen_ai.conversation.id", &t.conversation_id),
+		("user.id", &event.actor),
+		("magpie.event.id", &event.id),
+		("magpie.kind", &event.kind),
+		("magpie.decision", &event.decision),
+	] {
+		if !value.is_empty() {
+			attributes.push(json!({ "key": key, "value": { "stringValue": value } }));
+		}
+	}
+	for (key, value) in [
+		("gen_ai.usage.input_tokens", t.input_tokens),
+		("gen_ai.usage.output_tokens", t.output_tokens),
+	] {
+		if let Some(value) = value {
+			attributes.push(json!({ "key": key, "value": { "intValue": value.to_string() } }));
+		}
+	}
+	attributes.push(json!({ "key": "magpie.detail", "value": { "stringValue": detail_for(event, capture_payloads).to_string() } }));
+	let mut record = json!({
+		"timeUnixNano": event.at.timestamp_nanos_opt().unwrap_or(0).to_string(),
+		"severityNumber": 9,
+		"severityText": "INFO",
+		"body": { "stringValue": event.reason },
+		"attributes": attributes
+	});
+	if !t.trace_id.is_empty() {
+		record["traceId"] = json!(t.trace_id);
+		record["spanId"] = json!(t.span_id);
+	}
+	record
 }
 
 pub fn sentinel_record(event: &AuditEvent, capture_payloads: bool) -> Value {
@@ -150,6 +186,7 @@ mod tests {
 			decision: "redact".into(),
 			reason: "ABN redacted".into(),
 			detail: json!({"payload": "ABN 12 000 000 041", "hits": 1}),
+			telemetry: Default::default(),
 		}
 	}
 
@@ -171,5 +208,67 @@ mod tests {
 		let line = syslog_line(&event());
 		assert!(line.starts_with("<134>1 "));
 		assert!(line.contains("decision=\"redact\""));
+	}
+
+	#[test]
+	fn otlp_uses_genai_conventions_and_joins_the_trace() {
+		let mut event = event();
+		event.telemetry = crate::audit::Telemetry {
+			operation: "chat".into(),
+			provider: "anthropic".into(),
+			conversation_id: "session-1".into(),
+			trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
+			span_id: "00f067aa0ba902b7".into(),
+			input_tokens: Some(12),
+			output_tokens: Some(3),
+		};
+		let body = otlp_logs(&[event.clone(), event], false);
+		let records = &body["resourceLogs"][0]["scopeLogs"][0]["logRecords"];
+		assert_eq!(records.as_array().unwrap().len(), 2);
+		let record = &records[0];
+		assert_eq!(record["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+		assert_eq!(record["spanId"], "00f067aa0ba902b7");
+		let attribute = |key: &str| {
+			record["attributes"]
+				.as_array()
+				.unwrap()
+				.iter()
+				.find(|a| a["key"] == key)
+				.map(|a| a["value"].clone())
+		};
+		assert_eq!(
+			attribute("gen_ai.provider.name").unwrap()["stringValue"],
+			"anthropic"
+		);
+		assert_eq!(
+			attribute("gen_ai.request.model").unwrap()["stringValue"],
+			"example-au"
+		);
+		assert_eq!(
+			attribute("gen_ai.agent.id").unwrap()["stringValue"],
+			"example-agent"
+		);
+		assert_eq!(
+			attribute("gen_ai.tool.name").unwrap()["stringValue"],
+			"example_search"
+		);
+		assert_eq!(
+			attribute("gen_ai.conversation.id").unwrap()["stringValue"],
+			"session-1"
+		);
+		assert_eq!(
+			attribute("gen_ai.usage.input_tokens").unwrap()["intValue"],
+			"12"
+		);
+		assert_eq!(
+			attribute("user.id").unwrap()["stringValue"],
+			"alex@example.gov.au"
+		);
+		assert!(attribute("magpie.agent").is_none());
+		assert!(!body.to_string().contains("12 000 000 041"));
+		let untraced = otlp_log(&super::tests::event(), false);
+		let untraced = &untraced["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0];
+		assert!(untraced.get("traceId").is_none());
+		assert!(!untraced.to_string().contains("gen_ai.conversation.id"));
 	}
 }

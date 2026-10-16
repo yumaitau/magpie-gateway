@@ -18,7 +18,7 @@ use std::{
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(super) fn routes() -> Router<AppState> {
 	Router::new()
@@ -107,7 +107,10 @@ async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response {
 				"canIssue":pool.visible_to(&session.subject),"canManageKeys":manage_keys}),
 			);
 		}
-		Ok(json!({"pools":pools,"canCreate":manage}))
+		let catalog = &state.inner.model_catalog;
+		let catalog = manage
+			.then(|| json!({"claude":catalog.models("anthropic"),"codex":catalog.models("openai")}));
+		Ok(json!({"pools":pools,"canCreate":manage,"catalog":catalog}))
 	})();
 	match result {
 		Ok(value) => private(value),
@@ -127,6 +130,9 @@ enum Change {
 		name: String,
 		shared: bool,
 		enabled: bool,
+	},
+	DeletePool {
+		id: String,
 	},
 	SaveSubscription {
 		pool_id: String,
@@ -219,16 +225,29 @@ fn mutate(
 				));
 			}
 			valid_name(&name).map_err(bad)?;
+			let name = name.trim();
+			if store
+				.subscription_pools()
+				.map_err(db_error)?
+				.iter()
+				.any(|p| {
+					id.as_deref() != Some(p.id.as_str()) && p.name.to_lowercase() == name.to_lowercase()
+				}) {
+				return Err(fail(
+					StatusCode::CONFLICT,
+					"A pool with this name already exists.",
+				));
+			}
 			let pool = if let Some(id) = id {
 				let mut pool = owned_pool(&id)?;
-				pool.name = name.trim().into();
+				pool.name = name.into();
 				pool.shared = shared;
 				pool.enabled = enabled;
 				pool
 			} else {
 				Pool {
 					id: magpie::new_id(),
-					name: name.trim().into(),
+					name: name.into(),
 					owner: session.subject.clone(),
 					shared,
 					enabled,
@@ -238,6 +257,23 @@ fn mutate(
 				.save_subscription_pool(&pool, &session.subject)
 				.map_err(db_error)?;
 			Ok(json!({"id":pool.id}))
+		},
+		Change::DeletePool { id } => {
+			owned_pool(&id)?;
+			if store
+				.pool_members(&id, Utc::now().timestamp())
+				.map_err(db_error)?
+				.iter()
+				.any(|m| m.active > 0)
+			{
+				return Err(bad(
+					"Wait for active requests to finish before deleting the pool.",
+				));
+			}
+			store
+				.delete_subscription_pool(&id, &session.subject)
+				.map_err(db_error)?;
+			Ok(json!({"ok":true}))
 		},
 		Change::SaveSubscription {
 			pool_id,
@@ -923,6 +959,7 @@ async fn forward(
 	if let Some(marking) = headers.get("x-magpie-marking") {
 		governance.insert("x-magpie-marking", marking.clone());
 	}
+	crate::copy_correlation(&headers, &mut governance);
 	if !governance.contains_key("x-magpie-actor") {
 		return api_error(
 			StatusCode::FORBIDDEN,
@@ -1141,19 +1178,30 @@ async fn forward(
 			.store
 			.lock()
 			.expect("db")
-			.append_audit(&AuditEvent::new(
-				"subscription-pool",
-				&key.owner,
-				&key.id,
-				"",
+			.append_audit(&pool_event(
+				&key,
 				&model,
+				&governance,
+				&subscription.id,
 				"forward",
 				"Request assigned to subscription pool.",
-				json!({"poolId":key.pool_id,"subscriptionId":subscription.id}),
 			));
+		let completion = pool_event(
+			&key,
+			&model,
+			&governance,
+			&subscription.id,
+			"complete",
+			"Subscription pool request completed.",
+		);
 		if stream && !count {
 			let mut response = Response::new(Body::from_stream(LeasedStream {
-				stream: Box::pin(guarded_stream(upstream, state.clone(), governance)),
+				stream: Box::pin(guarded_stream(
+					upstream,
+					state.clone(),
+					completion,
+					governance,
+				)),
 				_lease: lease,
 			}));
 			response
@@ -1197,7 +1245,64 @@ async fn forward(
 				"Magpie governance blocked the provider response. Ask an administrator to review the audit log.",
 			);
 		}
+		if !count {
+			let mut completion = completion;
+			add_usage(&mut completion.telemetry, &output);
+			let _ = state
+				.inner
+				.store
+				.lock()
+				.expect("db")
+				.append_audit(&completion);
+		}
 		return private(output);
+	}
+}
+
+fn pool_event(
+	key: &PoolKey,
+	model: &str,
+	governance: &HeaderMap,
+	subscription: &str,
+	decision: &str,
+	reason: &str,
+) -> AuditEvent {
+	let mut event = AuditEvent::new(
+		"subscription-pool",
+		&key.owner,
+		&key.id,
+		"",
+		model,
+		decision,
+		reason,
+		json!({"poolId":key.pool_id,"subscriptionId":subscription}),
+	);
+	event.telemetry = crate::telemetry_from(governance);
+	event
+}
+
+/// Token usage from a Messages body, `message_start`/`message_delta`, or `response.completed`.
+fn add_usage(telemetry: &mut magpie::audit::Telemetry, value: &Value) {
+	let Some(usage) = [
+		&value["usage"],
+		&value["message"]["usage"],
+		&value["response"]["usage"],
+	]
+	.into_iter()
+	.find(|u| u.is_object()) else {
+		return;
+	};
+	let count = |name: &str| usage[name].as_u64();
+	if let Some(input) = count("input_tokens") {
+		// Anthropic reports cache reads and writes apart from input; the convention counts them as input.
+		telemetry.input_tokens = Some(
+			input
+				+ count("cache_creation_input_tokens").unwrap_or(0)
+				+ count("cache_read_input_tokens").unwrap_or(0),
+		);
+	}
+	if let Some(output) = count("output_tokens") {
+		telemetry.output_tokens = Some(output);
 	}
 }
 
@@ -1253,11 +1358,13 @@ fn sse_value(frame: &[u8]) -> Option<Value> {
 fn guarded_stream(
 	response: reqwest::Response,
 	state: AppState,
+	completion: AuditEvent,
 	headers: HeaderMap,
 ) -> impl Stream<Item = Result<axum::body::Bytes, std::io::Error>> + Send {
 	struct Pending<S> {
 		stream: Pin<Box<S>>,
 		state: AppState,
+		completion: AuditEvent,
 		headers: HeaderMap,
 		buffer: Vec<u8>,
 		text: String,
@@ -1268,6 +1375,7 @@ fn guarded_stream(
 	let pending = Pending {
 		stream: Box::pin(response.bytes_stream()),
 		state,
+		completion,
 		headers,
 		buffer: Vec::new(),
 		text: String::new(),
@@ -1282,6 +1390,7 @@ fn guarded_stream(
 			}
 			if let Some(frame) = take_sse_frame(&mut p.buffer) {
 				if let Some(event) = sse_value(&frame) {
+					add_usage(&mut p.completion.telemetry, &event);
 					let delta = event["delta"]
 						.as_str()
 						.or_else(|| event["delta"]["text"].as_str())
@@ -1338,7 +1447,17 @@ fn guarded_stream(
 						p,
 					));
 				},
-				None => return None,
+				None => {
+					// Recorded only when the provider finishes; an abandoned stream keeps its forward event.
+					let _ = p
+						.state
+						.inner
+						.store
+						.lock()
+						.expect("db")
+						.append_audit(&p.completion);
+					return None;
+				},
 			}
 		}
 	})

@@ -20,13 +20,18 @@ not run those queries.
 | PKCE state and mock codes | Process memory | Until the callback | Lost on restart |
 | DLP matched text | Not stored in the hit shown to the UI | n/a | The hit preview is the replacement. Payload capture is off |
 | Presidio request | Sent only when the analyzer URL is set | Their retention, not ours | Default URL is empty |
-| Telemetry | Not sent | n/a | Off unless a sink URL is set |
+| Telemetry | Not sent | n/a | Off unless a sink URL is set. Audit events go to an OTLP collector only when `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set |
 
 ## What a decision record contains
 
 Each decision stores the time, kind, actor, agent, tool, model,
 decision, reason, and a detail object with the phase, destination,
-region and hit metadata. It does not store the raw identifier unless
+region and hit metadata. It also stores correlation fields named after
+the OpenTelemetry GenAI conventions: operation, provider, the client's
+conversation ID (its `x-<agent>-session-id`, `session-id`, `thread-id`,
+`conversation_id` or `x-session-id` header), the W3C `traceparent`
+trace and span IDs, and, for subscription pools, input and output
+token counts. These are identifiers and counts, never prompt text. It does not store the raw identifier unless
 `capturePayloads` is turned on. That switch is off in the seed data and
 the settings form does not turn it on.
 

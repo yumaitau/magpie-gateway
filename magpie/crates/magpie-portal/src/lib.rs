@@ -9,6 +9,7 @@ mod australia;
 mod controls;
 pub mod model_catalog;
 mod native;
+pub mod otlp;
 mod pools;
 mod tuning;
 mod ui;
@@ -2640,7 +2641,7 @@ async fn mcp_check(
 	if let Ok(value) = body.actor.parse() {
 		extra.insert("x-magpie-actor", value);
 	}
-	let _ = headers;
+	copy_correlation(&headers, &mut extra);
 	let outcome = run_decision(&state, &extra, &text, phase, body.arguments.as_ref()).await;
 	Json(guardrail::mcp_response(&outcome)).into_response()
 }
@@ -2727,6 +2728,7 @@ async fn run_decision_recorded(
 	let mut outcome = guardrail::decide(&input, &policy);
 	outcome.audit.detail["organisationMode"] = json!(settings.guardrail_mode.as_str());
 	outcome.audit.detail["enforcementSource"] = json!(source);
+	outcome.audit.telemetry = telemetry_from(headers);
 	if record_all {
 		let _ = state
 			.inner
@@ -3719,6 +3721,89 @@ fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 	headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+/// Session headers agents send, after any `x-<agent>-session-id` such as Claude Code's.
+const CONVERSATION_HEADERS: &[&str] = &[
+	"session-id",
+	"session_id",
+	"thread-id",
+	"conversation_id",
+	"x-session-id",
+];
+
+fn conversation_header(headers: &HeaderMap) -> Option<(header::HeaderName, &str)> {
+	let vendor = headers
+		.keys()
+		.find(|name| {
+			let name = name.as_str();
+			name.starts_with("x-") && name.ends_with("-session-id") && name != "x-session-id"
+		})
+		.cloned();
+	vendor
+		.into_iter()
+		.chain(
+			CONVERSATION_HEADERS
+				.iter()
+				.map(|name| header::HeaderName::from_static(name)),
+		)
+		.find_map(|name| {
+			let value = header_str(headers, name.as_str())?.trim();
+			(!value.is_empty() && value.len() <= 256).then_some((name, value))
+		})
+}
+
+/// W3C `traceparent` trace and parent span IDs, when well formed.
+fn trace_context(headers: &HeaderMap) -> Option<(String, String)> {
+	let mut parts = header_str(headers, "traceparent")?.trim().split('-');
+	let (version, trace, span) = (parts.next()?, parts.next()?, parts.next()?);
+	let hex = |value: &str, len: usize| {
+		value.len() == len
+			&& value
+				.bytes()
+				.all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+	};
+	// All-zero trace and span IDs are invalid.
+	let id = |value: &str, len: usize| hex(value, len) && value.bytes().any(|b| b != b'0');
+	(hex(version, 2) && version != "ff" && id(trace, 32) && id(span, 16))
+		.then(|| (trace.into(), span.into()))
+}
+
+/// Carry the client's correlation headers into governance headers. They link
+/// records to traces and never decide identity or policy.
+pub(crate) fn copy_correlation(from: &HeaderMap, to: &mut HeaderMap) {
+	if let Some(value) = from.get("traceparent") {
+		to.insert("traceparent", value.clone());
+	}
+	if let Some((name, value)) = conversation_header(from)
+		&& let Ok(value) = value.parse()
+	{
+		to.insert(name, value);
+	}
+}
+
+pub(crate) fn telemetry_from(headers: &HeaderMap) -> magpie::audit::Telemetry {
+	let (trace_id, span_id) = trace_context(headers).unwrap_or_default();
+	magpie::audit::Telemetry {
+		operation: if header_str(headers, "x-magpie-tool").is_some() {
+			"execute_tool"
+		} else {
+			"chat"
+		}
+		.into(),
+		provider: match header_str(headers, "x-magpie-destination") {
+			Some("claude" | "anthropic") => "anthropic",
+			Some("codex" | "openai") => "openai",
+			_ => "",
+		}
+		.into(),
+		conversation_id: conversation_header(headers)
+			.map(|(_, value)| value.into())
+			.unwrap_or_default(),
+		trace_id,
+		span_id,
+		..Default::default()
+	}
 }
 
 fn metadata_from(headers: &HeaderMap) -> std::collections::BTreeMap<String, String> {

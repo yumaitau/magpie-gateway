@@ -106,7 +106,7 @@ async fn refresh_rotates_credentials_without_overwriting_subscription_edits() {
 	));
 }
 
-fn test_state() -> AppState {
+pub(crate) fn test_state() -> AppState {
 	let state = crate::state(Config {
 		gateway_admin_url: String::new(),
 		gateway_ui_dir: String::new(),
@@ -337,6 +337,7 @@ async fn management_respects_ownership_and_keys_are_returned_once() {
 	);
 	assert!(!listed.to_string().contains("fixture-a"));
 	assert!(!listed.to_string().contains("credential"));
+	assert!(listed["catalog"].is_null());
 	let forbidden = mutate(
 		&state,
 		&state.inner.store.lock().unwrap(),
@@ -420,9 +421,17 @@ async fn messages_forward_provider_auth_and_preserve_the_response() {
 		assert_eq!(input["messages"][0]["content"],"Hello");
 		Json(json!({"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"Hello there"}],"usage":{"input_tokens":1,"output_tokens":2}}))
 	}))).await;
+	let mut headers = key_headers();
+	headers.insert(
+		"traceparent",
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+			.parse()
+			.unwrap(),
+	);
+	headers.insert("x-claude-code-session-id", "session-1".parse().unwrap());
 	let response = forward(
 		state.clone(),
-		key_headers(),
+		headers,
 		json!({"model":"model","max_tokens":32,"messages":[{"role":"user","content":"Hello"}]}),
 		"claude",
 		false,
@@ -431,6 +440,31 @@ async fn messages_forward_provider_auth_and_preserve_the_response() {
 	.await;
 	assert_eq!(response.status(), StatusCode::OK);
 	assert_eq!(body(response).await["usage"]["output_tokens"], 2);
+	let events = state
+		.inner
+		.store
+		.lock()
+		.unwrap()
+		.search_audit(&Default::default())
+		.unwrap();
+	let completed = events.iter().find(|e| e.decision == "complete").unwrap();
+	assert_eq!(completed.telemetry.provider, "anthropic");
+	assert_eq!(completed.telemetry.conversation_id, "session-1");
+	assert_eq!(
+		completed.telemetry.trace_id,
+		"4bf92f3577b34da6a3ce929d0e0e4736"
+	);
+	assert_eq!(completed.telemetry.input_tokens, Some(1));
+	assert_eq!(completed.telemetry.output_tokens, Some(2));
+	// Governance decisions for the same request join the same conversation and trace.
+	let decisions: Vec<_> = events.iter().filter(|e| e.kind == "decision").collect();
+	assert!(!decisions.is_empty());
+	assert!(
+		decisions
+			.iter()
+			.all(|e| e.telemetry.conversation_id == "session-1"
+				&& e.telemetry.trace_id == "4bf92f3577b34da6a3ce929d0e0e4736")
+	);
 	assert_eq!(
 		state
 			.inner
@@ -550,7 +584,24 @@ async fn responses_support_json_clients_and_fragmented_sse() {
 			.active,
 		1
 	);
-	drop(response);
+	axum::body::to_bytes(response.into_body(), 1024 * 1024)
+		.await
+		.unwrap();
+	// JSON and streamed requests each record the provider's usage once the response completes.
+	let completed: Vec<_> = state
+		.inner
+		.store
+		.lock()
+		.unwrap()
+		.search_audit(&Default::default())
+		.unwrap()
+		.into_iter()
+		.filter(|e| e.decision == "complete")
+		.collect();
+	assert_eq!(completed.len(), 2);
+	assert!(completed.iter().all(|e| e.telemetry.provider == "openai"
+		&& e.telemetry.input_tokens == Some(3)
+		&& e.telemetry.output_tokens == Some(4)));
 	assert_eq!(
 		state
 			.inner
@@ -748,4 +799,65 @@ async fn key_scope_and_public_routes_require_pool_authentication() {
 		malformed.json::<Value>().await.unwrap()["error"]["type"],
 		"invalid_request_error"
 	);
+}
+
+#[tokio::test]
+#[allow(clippy::result_large_err)]
+async fn pool_names_are_unique_and_only_owners_delete_pools() {
+	let state = test_state();
+	let (owner, _) = session(&state, "owner", vec![Role::Admin]);
+	let (outsider, _) = session(&state, "outsider", vec![Role::Admin]);
+	let save = |session: &SessionRecord, id: Option<&str>, name: &str| {
+		mutate(
+			&state,
+			&state.inner.store.lock().unwrap(),
+			session,
+			true,
+			true,
+			Change::SavePool {
+				id: id.map(Into::into),
+				name: name.into(),
+				shared: true,
+				enabled: true,
+			},
+		)
+	};
+	assert_eq!(
+		save(&outsider, None, " team ").unwrap_err().status(),
+		StatusCode::CONFLICT
+	);
+	save(&owner, Some("pool"), "Team").unwrap();
+	let other = save(&owner, None, "Other").unwrap();
+	assert_eq!(
+		save(&owner, other["id"].as_str(), "TEAM")
+			.unwrap_err()
+			.status(),
+		StatusCode::CONFLICT
+	);
+	let delete = |session: &SessionRecord| {
+		mutate(
+			&state,
+			&state.inner.store.lock().unwrap(),
+			session,
+			true,
+			true,
+			Change::DeletePool { id: "pool".into() },
+		)
+	};
+	assert_eq!(
+		delete(&outsider).unwrap_err().status(),
+		StatusCode::FORBIDDEN
+	);
+	delete(&owner).unwrap();
+	assert!(
+		state
+			.inner
+			.store
+			.lock()
+			.unwrap()
+			.subscription_pool("pool")
+			.unwrap()
+			.is_none()
+	);
+	save(&outsider, None, "Team").unwrap();
 }

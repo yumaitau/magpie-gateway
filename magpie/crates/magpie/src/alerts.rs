@@ -155,18 +155,18 @@ impl Store {
 	pub fn collect_alerts(&self) -> Result<()> {
 		let tx = self.conn.unchecked_transaction()?;
 		let destinations = self.alert_destinations()?;
-		let mut q=self.conn.prepare("SELECT id,at,kind,actor,agent_id,tool,model,decision,reason,detail,rowid FROM audit_events WHERE rowid>(SELECT position FROM alert_cursor WHERE id=1) ORDER BY rowid LIMIT 200")?;
+		let mut q=self.conn.prepare("SELECT id,at,kind,actor,agent_id,tool,model,decision,reason,detail,telemetry,rowid FROM audit_events WHERE rowid>(SELECT position FROM alert_cursor WHERE id=1) ORDER BY rowid LIMIT 200")?;
 		let mut rows = q.query([])?;
 		while let Some(row) = rows.next()? {
 			let event = crate::store::read_audit(row)?;
 			for d in &destinations {
-				if row.get::<_, i64>(10)? > d.after_event && d.matches(&event) {
+				if row.get::<_, i64>(11)? > d.after_event && d.matches(&event) {
 					self.enqueue_alert(&d.id, &event)?;
 				}
 			}
 			self.conn.execute(
 				"UPDATE alert_cursor SET position=?1 WHERE id=1",
-				[row.get::<_, i64>(10)?],
+				[row.get::<_, i64>(11)?],
 			)?;
 		}
 		drop(rows);

@@ -17,6 +17,36 @@ pub struct AuditEvent {
 	pub reason: String,
 	/// JSON detail. Callers must already have redacted matched text.
 	pub detail: serde_json::Value,
+	#[serde(default)]
+	pub telemetry: Telemetry,
+}
+
+/// Correlation and usage named after the OpenTelemetry GenAI semantic
+/// conventions, so exported events join the traces of the agent that caused
+/// them. Empty fields are unknown and are not exported.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Telemetry {
+	/// `gen_ai.operation.name`
+	#[serde(skip_serializing_if = "String::is_empty")]
+	pub operation: String,
+	/// `gen_ai.provider.name`
+	#[serde(skip_serializing_if = "String::is_empty")]
+	pub provider: String,
+	/// `gen_ai.conversation.id`
+	#[serde(skip_serializing_if = "String::is_empty")]
+	pub conversation_id: String,
+	/// W3C trace context of the request that caused the event.
+	#[serde(skip_serializing_if = "String::is_empty")]
+	pub trace_id: String,
+	#[serde(skip_serializing_if = "String::is_empty")]
+	pub span_id: String,
+	/// `gen_ai.usage.input_tokens`, including cached input.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub input_tokens: Option<u64>,
+	/// `gen_ai.usage.output_tokens`
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub output_tokens: Option<u64>,
 }
 
 impl AuditEvent {
@@ -42,6 +72,7 @@ impl AuditEvent {
 			decision: decision.to_string(),
 			reason: reason.to_string(),
 			detail,
+			telemetry: Telemetry::default(),
 		}
 	}
 }

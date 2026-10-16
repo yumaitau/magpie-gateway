@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { PageHeader, StatusBanner } from '@/components/Primitives';
 import { isMagpie, magpieApi } from '@/magpie';
+import { matchesModelSearch } from '@/modelCatalog';
 
 type Pool = { id: string; name: string; owner: string; shared: boolean; enabled: boolean };
 type Subscription = {
@@ -25,7 +26,8 @@ type Entry = {
 	canManageKeys: boolean;
 	canIssue: boolean;
 };
-type Pools = { pools: Entry[]; canCreate: boolean };
+type Catalog = Record<Subscription['provider'], string[]>;
+type Pools = { pools: Entry[]; canCreate: boolean; catalog: Catalog | null };
 type Issued = { token: string; key: PoolKey };
 
 export function SubscriptionPoolsPage() {
@@ -164,7 +166,13 @@ export function SubscriptionPoolsPage() {
 				<p>No subscription pools are available to you yet.</p>
 			) : null}
 			{query.data?.pools.map(entry => (
-				<PoolPanel key={entry.pool.id} entry={entry} busy={busy} change={change} />
+				<PoolPanel
+					key={entry.pool.id}
+					entry={entry}
+					catalog={query.data.catalog}
+					busy={busy}
+					change={change}
+				/>
 			))}
 		</div>
 	);
@@ -172,10 +180,12 @@ export function SubscriptionPoolsPage() {
 
 function PoolPanel({
 	entry,
+	catalog,
 	busy,
 	change
 }: {
 	entry: Entry;
+	catalog: Catalog | null;
 	busy: boolean;
 	change: (body: unknown) => Promise<boolean>;
 }) {
@@ -219,6 +229,21 @@ function PoolPanel({
 						onClick={() => setEditing('new')}
 					>
 						Connect subscription
+					</button>
+					<button
+						className="button"
+						type="button"
+						disabled={busy}
+						onClick={() => {
+							if (
+								confirm(
+									`Delete ${pool.name}? Its subscriptions and every API key issued for it stop working.`
+								)
+							)
+								void change({ action: 'deletePool', id: pool.id });
+						}}
+					>
+						Delete pool
 					</button>
 				</div>
 			) : null}
@@ -284,6 +309,7 @@ function PoolPanel({
 				<SubscriptionForm
 					key={editing === 'new' ? 'new' : editing.id}
 					initial={editing === 'new' ? undefined : editing}
+					catalog={catalog}
 					busy={busy}
 					onCancel={() => setEditing(null)}
 					onSave={async body => {
@@ -381,20 +407,33 @@ function PoolPanel({
 
 function SubscriptionForm({
 	initial,
+	catalog,
 	busy,
 	onCancel,
 	onSave
 }: {
 	initial?: Subscription;
+	catalog: Catalog | null;
 	busy: boolean;
 	onCancel: () => void;
 	onSave: (body: Record<string, unknown>) => Promise<void>;
 }) {
 	const [name, setName] = useState(initial?.name ?? '');
 	const [provider, setProvider] = useState<'claude' | 'codex'>(initial?.provider ?? 'claude');
-	const [models, setModels] = useState(initial?.models.join('\n') ?? '');
+	const [models, setModels] = useState(initial?.models ?? []);
+	const [filter, setFilter] = useState('');
+	const [custom, setCustom] = useState('');
 	const [credential, setCredential] = useState('');
 	const [parallel, setParallel] = useState(initial?.maxParallel ?? 1);
+	// Chosen models stay listed even when the catalogue lacks them or has not synced.
+	const options = [...new Set([...models, ...(catalog?.[provider] ?? [])])]
+		.filter(model => matchesModelSearch(model, filter))
+		.sort((a, b) => Number(models.includes(b)) - Number(models.includes(a)) || a.localeCompare(b));
+	function addCustom() {
+		const added = custom.split(/[\s,]+/).filter(Boolean);
+		setModels(current => [...new Set([...current, ...added])]);
+		setCustom('');
+	}
 	return (
 		<form
 			className="page-stack"
@@ -404,7 +443,7 @@ function SubscriptionForm({
 					id: initial?.id,
 					name,
 					provider,
-					models: [...new Set(models.split(/[\s,]+/).filter(Boolean))],
+					models,
 					credential: credential || undefined,
 					enabled: initial?.enabled ?? true,
 					maxParallel: provider === 'codex' ? 1 : parallel
@@ -423,12 +462,55 @@ function SubscriptionForm({
 					<option value="codex">ChatGPT / Codex</option>
 				</select>
 			</label>
-			<label>
-				Model IDs (one per line)
-				<textarea required rows={3} value={models} onChange={e => setModels(e.target.value)} />
-			</label>
+			<fieldset className="page-stack">
+				<legend>Models ({models.length} selected)</legend>
+				<input
+					type="search"
+					aria-label="Filter models"
+					placeholder="Filter models"
+					value={filter}
+					onChange={e => setFilter(e.target.value)}
+				/>
+				<div className="pool-model-list">
+					{options.map(model => (
+						<label className="checkbox-row" key={model}>
+							<input
+								type="checkbox"
+								checked={models.includes(model)}
+								onChange={e =>
+									setModels(current =>
+										e.target.checked ? [...current, model] : current.filter(m => m !== model)
+									)
+								}
+							/>
+							{model}
+						</label>
+					))}
+					{options.length === 0 ? (
+						<p className="muted-copy">
+							{filter ? 'No models match.' : 'Model catalogue not synced. Add model IDs below.'}
+						</p>
+					) : null}
+				</div>
+				<label>
+					Other model ID
+					<input
+						value={custom}
+						onChange={e => setCustom(e.target.value)}
+						onKeyDown={e => {
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								addCustom();
+							}
+						}}
+					/>
+				</label>
+				<button className="button" type="button" disabled={!custom.trim()} onClick={addCustom}>
+					Add model
+				</button>
+			</fieldset>
 			<p className="muted-copy">
-				List the exact model IDs this subscription can use. Model access is checked by the provider.
+				Choose the models this subscription can use. Model access is checked by the provider.
 			</p>
 			<label>
 				{provider === 'claude' ? 'Claude setup-token' : 'Codex auth.json'}
@@ -461,7 +543,7 @@ function SubscriptionForm({
 				</label>
 			) : null}
 			<div className="button-row">
-				<button className="button primary" type="submit" disabled={busy}>
+				<button className="button primary" type="submit" disabled={busy || models.length === 0}>
 					Save subscription
 				</button>
 				<button className="button" type="button" disabled={busy} onClick={onCancel}>

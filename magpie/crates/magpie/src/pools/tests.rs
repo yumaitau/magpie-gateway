@@ -323,3 +323,31 @@ fn secrets_are_separate_from_policy_exports_and_audit() {
 		"one account cannot enter the pool twice"
 	);
 }
+#[test]
+fn deleting_a_pool_waits_for_leases_and_removes_members_and_keys() {
+	let store = setup();
+	store
+		.save_pool_subscription(&member("a", "claude", 1), "a", "owner")
+		.unwrap();
+	store
+		.issue_pool_key(&key(), "test-pool-token", "colleague")
+		.unwrap();
+	let now = chrono::Utc::now().timestamp();
+	let (_, lease) = store
+		.claim_pool_subscription("pool", "claude", "model", &[], now)
+		.unwrap()
+		.unwrap();
+	assert!(store.delete_subscription_pool("pool", "owner").is_err());
+	assert!(store.subscription_pool("pool").unwrap().is_some());
+	store.release_pool_lease(&lease).unwrap();
+	store.delete_subscription_pool("pool", "owner").unwrap();
+	assert!(store.subscription_pool("pool").unwrap().is_none());
+	assert!(store.pool_members("pool", now).unwrap().is_empty());
+	assert!(store.pool_keys("pool").unwrap().is_empty());
+	assert!(
+		store
+			.authenticate_pool_key("test-pool-token", 0)
+			.unwrap()
+			.is_none()
+	);
+}

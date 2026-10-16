@@ -37,6 +37,19 @@ impl Catalog {
 			..Default::default()
 		})
 	}
+
+	/// Model IDs for one catalogue provider; readers need no gateway-config access.
+	pub(super) fn models(&self, provider: &str) -> Vec<String> {
+		self
+			.snapshot
+			.lock()
+			.expect("catalog")
+			.providers
+			.iter()
+			.find(|p| p.provider == provider)
+			.map(|p| p.models.clone())
+			.unwrap_or_default()
+	}
 }
 
 /// Start once from the executable, so router construction and tests do no external I/O.
