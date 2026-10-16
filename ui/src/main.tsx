@@ -37,6 +37,7 @@ import { ModelsPage } from '@/pages/Models';
 import { PlaygroundPage } from '@/pages/Playground';
 import { McpPoliciesPage, PoliciesPage } from '@/pages/Policies';
 import { ProvidersPage } from '@/pages/Providers';
+import { SubscriptionPoolsPage } from '@/pages/SubscriptionPools';
 import { ObservabilitySettingsPage } from '@/pages/settings/ObservabilitySettings';
 import { SettingsLayout, settingsTabs } from '@/pages/settings/Settings';
 import { UiSettingsPage } from '@/pages/settings/UiSettings';
@@ -151,6 +152,11 @@ const providersRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/llm/providers',
 	component: ProvidersPage
+});
+const subscriptionPoolsRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/llm/subscription-pools',
+	component: SubscriptionPoolsPage
 });
 
 const logsRoute = createRoute({
@@ -319,6 +325,7 @@ const router = createRouter({
 			llmGetStartedRoute,
 			modelsRoute,
 			providersRoute,
+			subscriptionPoolsRoute,
 			policiesRoute,
 			guardrailsRoute,
 			costsRoute,

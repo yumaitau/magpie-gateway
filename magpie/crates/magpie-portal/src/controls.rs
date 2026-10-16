@@ -4,14 +4,25 @@ use super::*;
 pub(super) async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response {
 	let settings = load_settings(&state);
 	let rules = load_rules(&state);
-	let observing = settings.guardrail_mode == guardrail::Mode::LogOnly;
-	let mode = if observing {
-		"Observe only"
+	let (enforcing, trial) = cohort_names(&state);
+	let observing = settings.guardrail_mode == guardrail::Mode::LogOnly && enforcing.is_empty();
+	let mode = if settings.guardrail_mode == guardrail::Mode::LogOnly {
+		if enforcing.is_empty() {
+			"Observe only".into()
+		} else {
+			format!("Organisation trial · {} enforcing", enforcing.len())
+		}
+	} else if trial.is_empty() {
+		"Enforcing".into()
 	} else {
-		"Enforcing"
+		format!("Enforcing · {} still on trial", trial.len())
 	};
 	let effect = if observing {
 		"Observe only — does not block or alter traffic"
+	} else if settings.guardrail_mode == guardrail::Mode::LogOnly {
+		"Organisation trial. Groups set to Enforcing apply actions to their own people and gateway keys."
+	} else if !trial.is_empty() {
+		"Enforced for people on the organisation default. Groups set to Trial stay log-only."
 	} else {
 		"Enforced on connected routes"
 	};

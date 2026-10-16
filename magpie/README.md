@@ -8,6 +8,11 @@ Australian DLP checks, approvals, sessions and audit records. The portal
 crate, when present, serves the admin pages and the guardrail webhook.
 
 The portal listens on `127.0.0.1:8088` unless `MAGPIE_LISTEN` is set.
+
+The native console also supports [subscription pools](../docs/subscription-pools.md):
+connect Claude or ChatGPT/Codex subscriptions, share capacity, and issue scoped
+API keys for Messages and Responses clients at `/pool/v1`.
+
 `MAGPIE_DEMO=1` renders the pages with a synthetic viewer and an
 example-data banner. `MAGPIE_MOCK_IDP=1` serves the local identity
 provider used by the tests. `MAGPIE_SEED_EXAMPLES=1` loads the example
@@ -34,6 +39,14 @@ or create a password reset link. See [accounts and recovery](../docs/accounts.md
 
 ## Log-only trials
 
+Use **Access control** to add people and gateway key names to a group, then
+**Settings** to set that group's enforcement. Follow organisation uses the
+default below. Trial records what would happen and leaves that group's traffic
+unchanged. Enforcing applies the configured actions to that group only. If a
+person matches both an enforcing group and a trial group, enforcement wins.
+Requests that do not name a person follow the organisation default. Switching
+one group back does not change the others.
+
 Set `MAGPIE_GUARDRAIL_MODE=log-only` to evaluate policy without blocking or
 rewriting LLM requests, LLM responses or `/mcp/check` traffic. The default is
 `enforce`; unknown values stop startup. This is an initial default only.
@@ -44,7 +57,9 @@ action. Settings shows the current mode and all portal pages show a banner
 during a trial. Policy imports cannot overwrite it.
 
 Audit decisions are `log`, with the would-be policy action in
-`detail.wouldAction`, the mode in `detail.mode`, and the findings and reason
+`detail.wouldAction`, the effective mode in `detail.mode`, the organisation
+default in `detail.organisationMode`, the matching group in
+`detail.enforcementSource`, and the findings and reason
 preserved. Matched values and full payloads are not added to the audit log.
 The normal first matching rejection still ends policy evaluation. A would-be
 `redact`, `mask` or `tokenise` action on an LLM request becomes a block in
@@ -59,8 +74,10 @@ and does not call `/mcp/check`. Review those separate controls before an MCP
 trial. Webhook transport failures also retain the proxy's configured failure
 mode; the engagement proxy remains fail-closed if the portal is unavailable.
 
-To roll out enforcement, select **Enforcement** in Settings and click **Apply
-mode**. Changes are audited and take effect for new requests immediately.
+To roll out enforcement, open **Settings**, choose **Enforcing** for one group
+and save it. That group changes on the next request. The organisation default
+remains the fallback for everyone else. Select **Enforcement** and click
+**Apply mode** only when the fallback itself should change. Changes are audited.
 In-flight requests finish using the mode they started with. Policy rules and
 approvals are kept. `MAGPIE_GUARDRAIL_MODE` (Helm: `portal.environment`, engagement:
 `GUARDRAIL_MODE` in `magpie.conf`) only seeds a database with no saved mode.

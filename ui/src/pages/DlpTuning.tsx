@@ -29,14 +29,55 @@ type Result = {
 	sanitized: string;
 	mode: string;
 };
-const actions = [
-	['log', 'Monitor only: record findings, pass text'],
-	['redact', 'Redact: remove the matched value'],
-	['mask', 'Mask: reveal only the last two characters'],
-	['tokenise', 'Pseudonym: replace with a stable keyed token'],
-	['block', 'Block the request or response'],
-	['requireApproval', 'Hold: require approval'],
-	['allow', 'Allow: pass text and keep findings']
+const outcomes: {
+	value: string;
+	title: string;
+	detail: string;
+	advanced?: boolean;
+}[] = [
+	{
+		value: 'log',
+		title: 'Record it',
+		detail: 'The text goes through. The audit shows that this detector matched.'
+	},
+	{
+		value: 'block',
+		title: 'Stop the request',
+		detail:
+			'When this person is enforced, Magpie refuses the request and says why. During a trial the text still goes through.'
+	},
+	{
+		value: 'redact',
+		title: 'Hide the value',
+		detail:
+			'On model traffic this stops the request when enforced, so a coding agent’s tool calls stay intact. During a trial nothing is changed.'
+	},
+	{
+		value: 'requireApproval',
+		title: 'Ask for approval',
+		detail:
+			'An approver must release the request when this person is enforced. During a trial it is only recorded.'
+	},
+	{
+		value: 'mask',
+		title: 'Mask',
+		detail:
+			'Show only the last two characters. On model requests this also stops the request when enforced.',
+		advanced: true
+	},
+	{
+		value: 'tokenise',
+		title: 'Pseudonym',
+		detail:
+			'Replace the value with a stable token. On model requests this also stops the request when enforced.',
+		advanced: true
+	},
+	{
+		value: 'allow',
+		title: 'Allow',
+		detail: 'Pass the text and keep the finding. Other detectors can still stop the same request.',
+		advanced: true
+	}
 ];
 const names: Record<string, string> = {
 	abn: 'Australian Business Number (ABN)',
@@ -78,7 +119,7 @@ export function DlpTuningPage() {
 		<div className="page-stack dlp-page">
 			<PageHeader
 				title="Tune DLP"
-				description="Find the detector behind a false positive, compare a change, then save it for review."
+				description="Choose what a detector should do, try it on a sample, then save. Enforcement can apply to one group."
 			/>
 			<p>
 				<Link to="/help/$topic" params={{ topic: 'dlp' }}>
@@ -102,10 +143,15 @@ export function DlpTuningPage() {
 				<>
 					<p>
 						<strong>
-							Gateway mode: {query.data.mode === 'log-only' ? 'Observe only' : 'Enforcing'}
+							Organisation default: {query.data.mode === 'log-only' ? 'Trial' : 'Enforcing'}
 						</strong>
-						. This test checks local DLP only. Model approvals, routing, protective markings and
-						prompt injection may also block a request.
+						. A trial records the action and still lets the text through. Enforcing one group does not
+						have to cover everyone.{' '}
+						<Link to="/governance/$page" params={{ page: 'settings' }}>
+							Choose who is enforced
+						</Link>
+						. This test checks local DLP only. Model approvals, routing, protective markings and prompt
+						injection may also block a request.
 					</p>
 					<details className="schema-details">
 						<summary>Which detector is causing the problem?</summary>
@@ -252,28 +298,48 @@ function Tuner({
 			)}
 			{error && <p role="alert">{error}</p>}
 			<fieldset disabled={!settings.canEdit || busy}>
-				<legend>2. Adjust this detector</legend>
-				<label htmlFor="tuning-action">When this detector matches</label>
-				<select
-					id="tuning-action"
-					value={action}
-					onChange={e => {
-						setAction(e.target.value);
-						changed();
-					}}
-				>
-					{actions.map(([value, label]) => (
-						<option key={value} value={value}>
-							{label}
-						</option>
+				<legend>2. What should happen when this matches?</legend>
+				{outcomes
+					.filter(item => !item.advanced)
+					.map(item => (
+						<label className="magpie-check" key={item.value}>
+							<input
+								type="radio"
+								name="tuning-action"
+								value={item.value}
+								checked={action === item.value}
+								onChange={() => {
+									setAction(item.value);
+									changed();
+								}}
+							/>
+							<span>
+								<strong>{item.title}.</strong> {item.detail}
+							</span>
+						</label>
 					))}
-				</select>
-				<p>
-					Monitor only leaves this detector’s matches unchanged while other detectors keep their own
-					actions. Overlapping findings can still redact or block the same text.
-				</p>
+				<p>Other detectors keep their own actions and can still stop the same text.</p>
 				<details className="schema-details">
-					<summary>Exact-value exceptions and advanced options</summary>
+					<summary>Exact-value exceptions and other actions</summary>
+					{outcomes
+						.filter(item => item.advanced)
+						.map(item => (
+							<label className="magpie-check" key={item.value}>
+								<input
+									type="radio"
+									name="tuning-action"
+									value={item.value}
+									checked={action === item.value}
+									onChange={() => {
+										setAction(item.value);
+										changed();
+									}}
+								/>
+								<span>
+									<strong>{item.title}.</strong> {item.detail}
+								</span>
+							</label>
+						))}
 					<label className="magpie-check">
 						<input
 							type="checkbox"

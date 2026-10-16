@@ -675,7 +675,8 @@ goose session`
 					Open <strong>Cursor Settings</strong> &gt; <strong>Models</strong>.
 				</>,
 				<>
-					Enable <strong>Override OpenAI Base URL</strong> and set it to <code>{base}</code>.
+					Enable <strong>Override OpenAI Base URL</strong> and set it to <code>{v1}</code>. The
+					address must end in <code>/v1</code>. Cursor does not use a shell variable for this.
 				</>,
 				<>
 					Add <code>{args.model}</code> as a custom model, then test from <strong>Ask</strong> or{' '}
@@ -683,7 +684,7 @@ goose session`
 				</>
 			],
 			language: 'text',
-			code: `Override OpenAI Base URL: ${base}
+			code: `Override OpenAI Base URL: ${v1}
 OpenAI API Key: ${requiredApiKey}
 Custom model: ${args.model}`
 		},

@@ -92,6 +92,7 @@ pub(super) async fn access_page(State(state): State<AppState>, headers: HeaderMa
 	};
 	let users = store.portal_users().unwrap_or_default();
 	drop(store);
+	let can_enforce = require(&state, &headers, Permission::ChangeEnforcement).is_ok();
 	let mut body = String::from(
 		r#"<p>Roles grant individual actions. User groups assign those roles to people and identity-provider groups. A user receives the combined permissions of all matching groups. Unassigned users have no portal access.</p>
 <p>Changes are audited and apply to the next action, including existing sessions. Identity-provider group changes are refreshed at the next sign-in. Disabling a user denies their next portal request.</p>
@@ -132,13 +133,15 @@ pub(super) async fn access_page(State(state): State<AppState>, headers: HeaderMa
 		}
 		body.push_str("</form></details>");
 	}
-	body.push_str("<h2>User groups</h2><p>Select people who have signed in, or map the exact group IDs or app-role values supplied by your identity provider. Creating a group does not create login credentials.</p>");
+	body.push_str("<h2>User groups</h2><p>Select people who have signed in, or map the exact group IDs or app-role values supplied by your identity provider. Add the gateway key name for each person whose AI traffic should follow this group. Creating a group does not create login credentials.</p><p>Enforcement here applies only to this group. Follow organisation uses the default in Settings. Trial records what would happen and leaves traffic unchanged. Enforcing applies the configured actions to this group even when everyone else is still on a trial. If a person is in both an enforcing group and a trial group, enforcement wins. Switching one group back does not change the others.</p>");
 	for group in access.groups.iter().chain(std::iter::once(&UserGroup {
 		id: String::new(),
 		name: String::new(),
 		roles: vec![],
 		members: vec![],
 		identity_groups: vec![],
+		traffic_names: vec![],
+		enforcement: Default::default(),
 	})) {
 		let new = group.id.is_empty();
 		let key = if new { "new" } else { &group.id };
@@ -180,7 +183,22 @@ pub(super) async fn access_page(State(state): State<AppState>, headers: HeaderMa
 			));
 		}
 		body.push_str(&format!(r#"</div></fieldset><label for="idp-{key}">Identity-provider group IDs or app roles (one per line)</label><textarea id="idp-{key}" name="identity_groups" rows="3">{}</textarea>
-<button type="submit" name="operation" value="save">Save group</button>"#, ui::esc(&group.identity_groups.join("\n"))));
+<label for="keys-{key}">Gateway key names (one per line)</label><textarea id="keys-{key}" name="traffic_names" rows="3" aria-describedby="keys-help-{key}">{}</textarea>
+<p id="keys-help-{key}">These are the names on virtual API keys. A key named justin matches this group, as does a member whose email starts with justin@.</p>
+<label for="enforcement-{key}">Enforcement for this group</label>
+<select id="enforcement-{key}" name="enforcement" {}>
+<option value="follow" {}>Follow organisation</option>
+<option value="log-only" {}>Trial — record only, leave traffic unchanged</option>
+<option value="enforce" {}>Enforcing — apply actions to this group only</option>
+</select>
+<button type="submit" name="operation" value="save">Save group</button>"#,
+			ui::esc(&group.identity_groups.join("\n")),
+			ui::esc(&group.traffic_names.join("\n")),
+			if can_enforce { "" } else { "disabled" },
+			selected(group.enforcement == magpie::rbac::GroupEnforcement::Follow),
+			selected(group.enforcement == magpie::rbac::GroupEnforcement::Observe),
+			selected(group.enforcement == magpie::rbac::GroupEnforcement::Enforce),
+		));
 		if !new {
 			body.push_str(
 				" <button type=\"submit\" name=\"operation\" value=\"delete\">Delete group</button>",
@@ -313,8 +331,27 @@ pub(super) async fn group_post(
 	};
 	save(&state, &session, |access| {
 		let id = value(&form, "id");
+		let previous = access.groups.iter().find(|group| group.id == id).cloned();
 		access.groups.retain(|group| group.id != id);
 		if value(&form, "operation") != "delete" {
+			let enforcement = match value(&form, "enforcement") {
+				"" => previous
+					.as_ref()
+					.map(|group| group.enforcement)
+					.unwrap_or_default(),
+				raw if access.allows(&session, Permission::ChangeEnforcement) => raw.parse()?,
+				_ => previous
+					.as_ref()
+					.map(|group| group.enforcement)
+					.unwrap_or_default(),
+			};
+			let traffic_names = if form.contains_key("traffic_names") {
+				magpie::rbac::traffic_names_from_lines(value(&form, "traffic_names"))?
+			} else {
+				previous
+					.map(|group| group.traffic_names)
+					.unwrap_or_default()
+			};
 			access.groups.push(UserGroup {
 				id: id.into(),
 				name: value(&form, "name").into(),
@@ -326,6 +363,8 @@ pub(super) async fn group_post(
 					.filter(|s| !s.is_empty())
 					.map(str::to_string)
 					.collect(),
+				traffic_names,
+				enforcement,
 			});
 		}
 		Ok(())
@@ -357,6 +396,164 @@ pub(super) async fn user_post(
 	let store = state.inner.store.lock().expect("db");
 	match store.set_user_disabled(subject, disabled, &session.email) {
 		Ok(()) => Redirect::to("/access").into_response(),
+		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+	}
+}
+
+pub(super) fn enforcement_forms(state: &AppState, headers: &HeaderMap) -> String {
+	let can_edit = require(state, headers, Permission::ChangeEnforcement).is_ok();
+	let store = state.inner.store.lock().expect("db");
+	let access = store.access_control().ok().flatten();
+	let users = store.portal_users().unwrap_or_default();
+	let recent = store
+		.search_audit(&magpie::audit::AuditQuery {
+			limit: 200,
+			..magpie::audit::AuditQuery::default()
+		})
+		.unwrap_or_default();
+	drop(store);
+	let would_act = recent
+		.iter()
+		.filter(|event| {
+			matches!(
+				event
+					.detail
+					.get("wouldAction")
+					.and_then(|value| value.as_str())
+					.unwrap_or(""),
+				"block" | "redact" | "mask" | "tokenise" | "requireApproval"
+			)
+		})
+		.count();
+	let readiness = if recent.is_empty() {
+		"No gateway decisions are recorded yet. Send a synthetic example through a connected app, look at the audit result, then enforce one group. You can put that group back on trial immediately.".to_string()
+	} else if would_act == 0 {
+		format!(
+			"The latest {} decisions have no findings that would block or change traffic. That can mean the trial has not seen sensitive text yet. Send a synthetic example, confirm the audit result, then enforce one group. Switching that group back does not change anyone else.",
+			recent.len()
+		)
+	} else {
+		format!(
+			"The latest {} decisions include {} that would block or change traffic if those people were enforced. Review them in Audit and tune a noisy detector before you widen enforcement. Saving a group below changes only that group, and you can switch it back to trial on the next request.",
+			recent.len(),
+			would_act
+		)
+	};
+	let Some(access) = access else {
+		return "<p>Access controls are unavailable, so group enforcement cannot be shown.</p>".into();
+	};
+	let mut body = format!(
+		r#"<h2>Enforce a group</h2>
+<p>{readiness} <a href="/audit">Review decisions</a> · <a href="/ui/dlp-tuning">Tune a detector</a> · <a href="/access">Edit group membership</a></p>
+<p>The organisation default above is the fallback. It is not the only switch. A group set to Enforcing applies actions to its members and gateway key names. Everyone else stays on their current setting.</p>"#
+	);
+	if access.groups.is_empty() {
+		body.push_str("<p>No user groups yet. Create one in Access control and add the gateway key names for the people in the trial.</p>");
+		return body;
+	}
+	for group in &access.groups {
+		let names = if group.traffic_names.is_empty() {
+			"None yet. Add the key names, or enforcement matches signed-in members by user ID, email or display name.".into()
+		} else {
+			ui::esc(&group.traffic_names.join(", "))
+		};
+		let who = if group.members.is_empty() {
+			"No signed-in people selected.".into()
+		} else {
+			ui::esc(
+				&group
+					.members
+					.iter()
+					.map(|subject| {
+						users
+							.iter()
+							.find(|user| &user.subject == subject)
+							.map(|user| format!("{} ({})", user.name, user.email))
+							.unwrap_or_else(|| subject.clone())
+					})
+					.collect::<Vec<_>>()
+					.join(", "),
+			)
+		};
+		let disabled = if can_edit { "" } else { "disabled" };
+		body.push_str(&format!(
+			r#"<section aria-labelledby="cohort-{id}"><h3 id="cohort-{id}">{name}</h3>
+<p>{who} Gateway keys: {names}.</p>
+<form method="post" action="/settings/group-enforcement">
+<input type="hidden" name="group" value="{id_value}">
+<label for="cohort-mode-{id}">Enforcement for {name}</label>
+<select id="cohort-mode-{id}" name="enforcement" {disabled}>
+<option value="follow" {follow}>Follow organisation</option>
+<option value="log-only" {trial}>Trial — record only, leave traffic unchanged</option>
+<option value="enforce" {enforce}>Enforcing — apply actions to this group only</option>
+</select>
+<label for="cohort-keys-{id}">Gateway key names (one per line)</label>
+<textarea id="cohort-keys-{id}" name="traffic_names" rows="3" {disabled}>{keys}</textarea>
+<p>Saving changes only {name}. Other groups and the organisation default stay as they are.</p>
+<button type="submit" {disabled}>Save {name}</button>
+</form></section>"#,
+			id = ui::esc(&group.id),
+			name = ui::esc(&group.name),
+			who = who,
+			names = names,
+			id_value = ui::esc(&group.id),
+			disabled = disabled,
+			follow = selected(group.enforcement == magpie::rbac::GroupEnforcement::Follow),
+			trial = selected(group.enforcement == magpie::rbac::GroupEnforcement::Observe),
+			enforce = selected(group.enforcement == magpie::rbac::GroupEnforcement::Enforce),
+			keys = ui::esc(&group.traffic_names.join("\n")),
+		));
+	}
+	if !can_edit {
+		body.push_str(
+			"<p>Changing a group's enforcement requires the Change enforcement mode permission.</p>",
+		);
+	}
+	body
+}
+
+pub(super) async fn group_enforcement_post(
+	State(state): State<AppState>,
+	headers: HeaderMap,
+	Form(form): Form<HashMap<String, String>>,
+) -> Response {
+	let session = match require(&state, &headers, Permission::ChangeEnforcement) {
+		Ok(session) => session,
+		Err(response) => return response,
+	};
+	let id = value(&form, "group");
+	let enforcement: magpie::rbac::GroupEnforcement = match value(&form, "enforcement").parse() {
+		Ok(enforcement) => enforcement,
+		Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+	};
+	let traffic_names = if form.contains_key("traffic_names") {
+		match magpie::rbac::traffic_names_from_lines(value(&form, "traffic_names")) {
+			Ok(names) => Some(names),
+			Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+		}
+	} else {
+		None
+	};
+	let store = state.inner.store.lock().expect("db");
+	let result = (|| -> magpie::Result<()> {
+		let mut access = store
+			.access_control()?
+			.ok_or_else(|| magpie::Error::Msg("Access controls are unavailable.".into()))?;
+		{
+			let group = access
+				.groups
+				.iter_mut()
+				.find(|group| group.id == id)
+				.ok_or_else(|| magpie::Error::Msg("Choose a group that already exists.".into()))?;
+			group.enforcement = enforcement;
+			if let Some(names) = &traffic_names {
+				group.traffic_names = names.clone();
+			}
+		}
+		store.set_access_control(&access, &session.email)
+	})();
+	match result {
+		Ok(()) => Redirect::to("/settings").into_response(),
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
 	}
 }

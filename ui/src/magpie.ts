@@ -7,10 +7,21 @@ export type MagpieSession = {
 	canLogout: boolean;
 	canReadGateway: boolean;
 	canManagePeople: boolean;
+	canUseSubscriptionPools?: boolean;
 	canChangeEnforcement: boolean;
 	mode: string;
+	enforcingGroups?: string[];
+	trialGroups?: string[];
 	links: { href: string; label: string }[];
 };
+export function enforcementLabel(session: Pick<MagpieSession, 'mode' | 'enforcingGroups' | 'trialGroups'>) {
+	const enforcing = session.enforcingGroups?.length ?? 0;
+	const trial = session.trialGroups?.length ?? 0;
+	if (session.mode === 'log-only') {
+		return enforcing === 0 ? 'Trial' : `Trial · ${enforcing} enforcing`;
+	}
+	return trial === 0 ? 'Enforcing' : `Enforcing · ${trial} on trial`;
+}
 export async function magpieApi<T>(path: string, body?: unknown): Promise<T> {
 	const response = await fetch(path, {
 		credentials: 'same-origin',

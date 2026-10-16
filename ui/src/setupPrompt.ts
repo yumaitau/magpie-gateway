@@ -19,7 +19,9 @@ export function setupPrompt(context: {
 				? 'For Claude Code, use the gateway origin as ANTHROPIC_BASE_URL, the gateway key as ANTHROPIC_AUTH_TOKEN, and the configured gateway model.'
 				: context.client === 'OpenCode'
 					? 'For OpenCode, add a Magpie provider using the configuration schema supported by the installed version. Reference MAGPIE_API_KEY from the environment and use the gateway /v1 endpoint.'
-					: 'Use the installed agent’s current gateway/custom-provider settings. Claude Code needs Messages; Codex needs Responses; OpenCode needs a compatible provider configuration. Check its official documentation for the installed version.';
+					: context.client === 'Cursor'
+					? 'For Cursor, open Settings > Models, enable Override OpenAI Base URL and set it to the gateway origin plus /v1. Use the gateway key as the OpenAI API key and add the gateway model as a custom model. Cursor ignores shell environment variables, so exporting a base URL does not connect this IDE.'
+					: 'Use the installed agent’s current gateway/custom-provider settings. Claude Code needs Messages; Codex needs Responses; OpenCode needs a compatible provider configuration. If this is Cursor, set Override OpenAI Base URL to the gateway origin plus /v1. Check the installed version’s documentation. Cursor ignores shell environment variables.';
 	return `Set up ${client} on this machine to use Magpie Gateway at ${JSON.stringify(context.gateway)}. Do the setup and test it, not just explain it.
 
 ${selection}
@@ -28,7 +30,7 @@ Detect my OS, shell and agent version. Install any missing client from its offic
 
 ${reference}
 
-Keep gateway approvals and DLP enabled. Do not bypass the gateway or fall back to a direct provider. Send “Reply with ready” through the configured agent, verify a real response and streaming/tool support it needs, then give me the launch command and how to undo the changes. If blocked, identify the specific missing route, key or permission.
+Keep gateway approvals and DLP enabled. Do not bypass the gateway or fall back to a direct provider. If ${context.gateway}/v1/models rejects the key, stop and say so. Do not rewrite this machine’s agent settings until that check succeeds; a rejected key usually means the running gateway has not loaded the key yet. Send “Reply with ready” through the configured agent, verify a real response and streaming/tool support it needs, then give me the launch command and how to undo the changes. If blocked, identify the specific missing route, key or permission.
 `;
 }
 

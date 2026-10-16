@@ -991,6 +991,8 @@ fn runtime_mode_survives_restart_and_a_changed_deployment_default() {
 			roles: vec!["viewer".into()],
 			members: vec!["saved-user".into()],
 			identity_groups: vec![],
+			traffic_names: vec![],
+			enforcement: Default::default(),
 		});
 		store.set_access_control(&access, "administrator").unwrap();
 	}
@@ -2846,4 +2848,94 @@ async fn model_catalog_requires_gateway_permissions_and_same_origin() {
 			.status(),
 		StatusCode::FORBIDDEN
 	);
+}
+
+#[tokio::test]
+async fn group_enforcement_applies_only_to_the_named_key() {
+	let mut config = config(BreakGlassConfig::default(), false);
+	config.guardrail_mode = magpie::guardrail::Mode::LogOnly;
+	let base = spawn_with(config).await;
+	let (admin, _) = client(&base);
+	login(&admin, &base, "sam").await;
+	assert_eq!(
+		admin
+			.post(format!("{base}/access/groups"))
+			.form(&[
+				("id", "pilot"),
+				("name", "Pilot"),
+				("traffic_names", "justin"),
+				("enforcement", "enforce"),
+				("operation", "save"),
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let blocked = guardrail_for(&admin, &base, "justin").await;
+	assert_eq!(blocked["action"]["status_code"], 400, "{blocked}");
+	let untouched = guardrail_for(&admin, &base, "someone-else").await;
+	assert!(
+		untouched["action"].get("status_code").is_none(),
+		"{untouched}"
+	);
+	let anonymous = guardrail_for(&admin, &base, "gateway").await;
+	assert!(
+		anonymous["action"].get("status_code").is_none(),
+		"{anonymous}"
+	);
+	assert_eq!(
+		admin
+			.post(format!("{base}/settings/group-enforcement"))
+			.form(&[
+				("group", "pilot"),
+				("enforcement", "log-only"),
+				("traffic_names", "justin"),
+			])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let trial = guardrail_for(&admin, &base, "justin").await;
+	assert!(trial["action"].get("status_code").is_none(), "{trial}");
+	assert_eq!(
+		admin
+			.post(format!("{base}/settings/guardrail-mode"))
+			.form(&[("mode", "enforce")])
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::SEE_OTHER
+	);
+	let still_trial = guardrail_for(&admin, &base, "justin").await;
+	assert!(
+		still_trial["action"].get("status_code").is_none(),
+		"{still_trial}"
+	);
+	let everyone_else = guardrail_for(&admin, &base, "someone-else").await;
+	assert_eq!(
+		everyone_else["action"]["status_code"], 400,
+		"{everyone_else}"
+	);
+}
+
+async fn guardrail_for(client: &Client, base: &str, actor: &str) -> serde_json::Value {
+	let response = client
+		.post(format!("{base}/guardrails/request"))
+		.header("x-magpie-region", "ap-southeast-2")
+		.header("x-magpie-destination", "example-au-model")
+		.header("x-magpie-model", "example-au-model")
+		.header("x-magpie-actor", actor)
+		.json(&json!({
+			"body": {"messages": [{"role": "user", "content": "Example only. ABN 12 000 000 041."}]}
+		}))
+		.send()
+		.await
+		.expect("webhook");
+	assert_eq!(response.status(), StatusCode::OK);
+	response.json().await.expect("body")
 }

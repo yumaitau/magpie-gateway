@@ -122,7 +122,7 @@ export function SetupPromptDownload() {
 								setCopied('');
 							}}
 						>
-							{['This coding agent', 'Claude Code', 'Codex', 'OpenCode'].map(item => (
+							{['This coding agent', 'Cursor', 'Claude Code', 'Codex', 'OpenCode'].map(item => (
 								<option key={item}>{item}</option>
 							))}
 						</select>

@@ -181,9 +181,12 @@ Fable models have no AU inference profile and are not offered.
   it on arm64.
 - A failed install rolls itself back, so `up` can simply be run again.
 - `./magpie.sh use <client> [person]` points this machine's Claude Code,
-  Codex, opencode and Copilot in VS Code at the gateway; `unuse` undoes
-  it. The key lives in `~/.config/magpie/<client>.key` and each tool
-  reads it from there.
+  Codex, opencode and Copilot in VS Code at the gateway after the gateway
+  accepts that person's key. If the key is rejected, agent files are left
+  unchanged. `./magpie.sh doctor <client> [person]` prints why this machine is
+  not connected. `unuse` undoes a successful `use`. The key lives in
+  `~/.config/magpie/<client>.key` and each tool reads it from there. Cursor is
+  set in the IDE: Override OpenAI Base URL must end in `/v1`.
 
 - `up` and `down` show the Terraform plan and ask. Set
   `MAGPIE_AUTO_APPROVE=1` to skip that in a script.
@@ -212,6 +215,9 @@ This seeds the initial mode. Existing deployments keep their current mode when
 upgrading. After first start, use **Settings → Guardrail mode → Apply mode** to
 switch between Log-only and Enforcement without redeploying. The choice persists
 across restarts and deployments; editing `magpie.conf` does not replace it.
+That value is the organisation default. Settings can enforce or keep a trial
+for one user group without changing the others. Add the gateway key name to the
+group so traffic from that person's key follows the group.
 
 The portal shows a trial banner. Requests and responses pass unchanged while
 findings appear in the audit log and CSV as `log`, with the would-be action and

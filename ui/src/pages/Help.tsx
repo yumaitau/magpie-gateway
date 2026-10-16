@@ -188,7 +188,7 @@ const guides: Guide[] = [
 			},
 			{
 				title: 'Apply enforcement',
-				body: 'In Enforcement and settings, choose Enforce under Guardrail mode and press Apply mode. This requires Change enforcement mode permission and takes effect immediately. Policy settings below it use their separate approval flow.',
+				body: 'In Enforcement and settings, the organisation default is the fallback. To turn enforcement on for some people, choose Enforcing on their group and press Save. Everyone else stays on their current setting, and that group can be switched back to trial immediately. Applying the organisation default still requires Change enforcement mode and takes effect on the next request. Policy settings below it use their separate approval flow.',
 				to: '/governance/settings',
 				link: 'Open enforcement settings'
 			},

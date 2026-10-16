@@ -157,7 +157,7 @@ jobs:
             sleep 1
           done
           MAGPIE_NATIVE_URL=http://127.0.0.1:18188 \
-            npx --prefix magpie/axe playwright test --config=magpie/axe/playwright.config.js native/accounts.spec.js
+            npx --prefix magpie/axe playwright test --config=magpie/axe/playwright.config.js native/accounts.spec.js native/pools.spec.js
 
   image:
     runs-on: ubuntu-latest

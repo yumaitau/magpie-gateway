@@ -168,6 +168,7 @@ impl Store {
 		self.conn.execute_batch(SQLITE_SCHEMA)?;
 		self.migrate_accounts()?;
 		self.conn.execute_batch(crate::alerts::SCHEMA)?;
+		self.conn.execute_batch(crate::pools::SCHEMA)?;
 		Ok(())
 	}
 

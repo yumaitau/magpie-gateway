@@ -9,6 +9,7 @@ mod australia;
 mod controls;
 pub mod model_catalog;
 mod native;
+mod pools;
 mod tuning;
 mod ui;
 
@@ -237,6 +238,7 @@ pub fn router(state: AppState) -> Router {
 		.merge(webhooks)
 		.merge(native::routes())
 		.merge(accounts::routes())
+		.merge(pools::routes())
 		.route(
 			"/api/magpie/model-catalog",
 			get(model_catalog::get).post(model_catalog::sync),
@@ -286,6 +288,10 @@ pub fn router(state: AppState) -> Router {
 		.route(
 			"/settings/guardrail-mode",
 			get(guardrail_mode_get).post(guardrail_mode_post),
+		)
+		.route(
+			"/settings/group-enforcement",
+			post(access::group_enforcement_post),
 		)
 		.route("/use-cases.csv", get(use_cases_csv).post(use_cases_import))
 		.route("/api/export", get(export_docs))
@@ -971,12 +977,34 @@ fn viewer_of(state: &AppState, session: &SessionRecord) -> ui::Viewer {
 }
 
 fn page(state: &AppState, headers: &HeaderMap, path: &str, title: &str, body: String) -> Response {
-	let body = if load_settings(state).guardrail_mode == guardrail::Mode::LogOnly {
-		format!(
-			r#"<p class="banner warn" role="status">Log-only trial: policies are evaluated and logged, but traffic is not blocked or changed. Kill switches are also log-only.</p>{body}"#
-		)
-	} else {
-		body
+	let (enforcing, trial) = cohort_names(state);
+	let body = match load_settings(state).guardrail_mode {
+		guardrail::Mode::LogOnly if enforcing.is_empty() => format!(
+			r#"<p class="banner warn" role="status">Log-only trial: policies are evaluated and logged, but traffic is not blocked or changed. Kill switches are also log-only. You can enforce one group from Settings without changing everyone else.</p>{body}"#
+		),
+		guardrail::Mode::LogOnly => format!(
+			r#"<p class="banner warn" role="status">Organisation default is a log-only trial. {cohort} Everyone else is unchanged, and a group can be switched back from Settings.</p>{body}"#,
+			cohort = if enforcing.len() == 1 {
+				"1 group set to Enforcing applies its actions now.".to_string()
+			} else {
+				format!(
+					"{} groups set to Enforcing apply their actions now.",
+					enforcing.len()
+				)
+			}
+		),
+		guardrail::Mode::Enforce if !trial.is_empty() => format!(
+			r#"<p class="banner warn" role="status">Enforcement is on for people who follow the organisation default. {cohort}</p>{body}"#,
+			cohort = if trial.len() == 1 {
+				"1 group is still on trial, and that can be changed per group in Settings.".to_string()
+			} else {
+				format!(
+					"{} groups are still on trial, and that can be changed per group in Settings.",
+					trial.len()
+				)
+			}
+		),
+		guardrail::Mode::Enforce => body,
 	};
 	match session_from(state, headers) {
 		Ok((session, cookie)) => {
@@ -2136,17 +2164,18 @@ async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 	let settings = load_settings(&state);
 	let body = format!(
 		r#"<h2>Enforcement</h2>
-<p>Current mode: <strong>{}</strong></p>
+<p>Organisation default: <strong>{}</strong></p>
 <form method="post" action="/settings/guardrail-mode">
 <label for="guardrail_mode">Guardrail mode</label>
 <select id="guardrail_mode" name="mode" aria-describedby="guardrail-mode-help" {}>
 <option value="log-only" {}>Log-only — record findings and allow traffic unchanged</option>
 <option value="enforce" {}>Enforcement — apply policy actions</option>
 </select>
-<p id="guardrail-mode-help">Applies to new requests immediately and stays saved across restarts. Log-only also makes kill switches log-only. Authentication stays required.</p>
+<p id="guardrail-mode-help">This is the fallback for people who are not in a group with its own setting, and for requests that do not name a person. It does not have to change everyone at once. Use the group settings below to enforce one group and leave the rest on trial. Log-only also makes kill switches log-only for people still on the trial. Authentication stays required.</p>
 <button type="submit" {}>Apply mode</button>
 </form>
-<p>Changing this mode requires the Change enforcement mode permission. Changes take effect immediately and are audited; policy edits below retain their existing approval process.</p>
+<p id="cohort-slot"></p>
+<p>Changing the organisation default requires the Change enforcement mode permission. It takes effect on the next request and is audited. Policy edits below retain their existing approval process.</p>
 <h2>Policy settings</h2>
 <form method="post" action="/settings"><fieldset {}><legend>Policy settings and kill switches</legend>
 <label for="sovereign">Sovereign mode</label>
@@ -2188,6 +2217,11 @@ async fn settings_page(State(state): State<AppState>, headers: HeaderMap) -> Res
 		} else {
 			"disabled"
 		}
+	);
+	let body = body.replacen(
+		"<p id=\"cohort-slot\"></p>",
+		&access::enforcement_forms(&state, &headers),
+		1,
 	);
 	let body = format!("{body}{}", pending_html(&state));
 	page(&state, &headers, "/settings", "Settings", body)
@@ -2618,6 +2652,17 @@ async fn run_decision(
 	phase: Phase,
 	arguments: Option<&Value>,
 ) -> magpie::guardrail::Outcome {
+	run_decision_recorded(state, headers, text, phase, arguments, true).await
+}
+
+async fn run_decision_recorded(
+	state: &AppState,
+	headers: &HeaderMap,
+	text: &str,
+	phase: Phase,
+	arguments: Option<&Value>,
+	record_all: bool,
+) -> magpie::guardrail::Outcome {
 	let settings = load_settings(state);
 	let rules = load_rules(state);
 	let presidio = if settings.presidio_analyzer_url.is_empty()
@@ -2648,6 +2693,9 @@ async fn run_decision(
 	let metadata = metadata_from(headers);
 	let tool = header_str(headers, "x-magpie-tool");
 	let model = header_str(headers, "x-magpie-model");
+	let actor = header_str(headers, "x-magpie-actor").unwrap_or("gateway");
+	let presented = presented_groups(headers);
+	let (mode, source) = effective_guardrail_mode(state, settings.guardrail_mode, actor, &presented);
 	let input = Inspect {
 		text,
 		metadata: &metadata,
@@ -2659,11 +2707,11 @@ async fn run_decision(
 		arguments,
 		phase,
 		now: Utc::now(),
-		actor: header_str(headers, "x-magpie-actor").unwrap_or("gateway"),
+		actor,
 	};
 	let argument_rules = load_argument_rules(state);
 	let policy = PolicySet {
-		mode: settings.guardrail_mode,
+		mode,
 		rules: &rules,
 		approvals: &approvals,
 		approved_protected: &settings.approved_protected,
@@ -2676,13 +2724,17 @@ async fn run_decision(
 		scan_injection: phase == Phase::Response || tool.is_some(),
 		extra_injection: &[],
 	};
-	let outcome = guardrail::decide(&input, &policy);
-	let _ = state
-		.inner
-		.store
-		.lock()
-		.expect("db")
-		.append_audit(&outcome.audit);
+	let mut outcome = guardrail::decide(&input, &policy);
+	outcome.audit.detail["organisationMode"] = json!(settings.guardrail_mode.as_str());
+	outcome.audit.detail["enforcementSource"] = json!(source);
+	if record_all {
+		let _ = state
+			.inner
+			.store
+			.lock()
+			.expect("db")
+			.append_audit(&outcome.audit);
+	}
 	outcome
 }
 
@@ -3022,6 +3074,61 @@ fn load_settings(state: &AppState) -> Settings {
 			.unwrap_or(true),
 		kill_global: kill.global,
 		kill_agents: kill.agents.join(", "),
+	}
+}
+
+fn cohort_names(state: &AppState) -> (Vec<String>, Vec<String>) {
+	let store = state.inner.store.lock().expect("db");
+	let Some(access) = store.access_control().ok().flatten() else {
+		return (Vec::new(), Vec::new());
+	};
+	let mut enforcing = Vec::new();
+	let mut trial = Vec::new();
+	for group in &access.groups {
+		match group.enforcement {
+			magpie::rbac::GroupEnforcement::Enforce => enforcing.push(group.name.clone()),
+			magpie::rbac::GroupEnforcement::Observe => trial.push(group.name.clone()),
+			magpie::rbac::GroupEnforcement::Follow => {},
+		}
+	}
+	(enforcing, trial)
+}
+
+fn presented_groups(headers: &HeaderMap) -> Vec<String> {
+	header_str(headers, "x-magpie-groups")
+		.unwrap_or("")
+		.split(',')
+		.map(str::trim)
+		.filter(|value| !value.is_empty() && value.len() <= 100)
+		.take(32)
+		.map(str::to_string)
+		.collect()
+}
+
+fn effective_guardrail_mode(
+	state: &AppState,
+	organisation: guardrail::Mode,
+	actor: &str,
+	presented: &[String],
+) -> (guardrail::Mode, String) {
+	let store = state.inner.store.lock().expect("db");
+	let access = store.access_control().ok().flatten();
+	let users = store.portal_users().unwrap_or_default();
+	drop(store);
+	let Some(access) = access else {
+		return (organisation, "organisation".into());
+	};
+	let presented: Vec<&str> = presented.iter().map(String::as_str).collect();
+	match access.effective_enforcement(&users, actor, &presented) {
+		(magpie::rbac::EffectiveEnforcement::Organisation, _) => (organisation, "organisation".into()),
+		(magpie::rbac::EffectiveEnforcement::Enforce, groups) => (
+			guardrail::Mode::Enforce,
+			format!("group:{}", groups.join(",")),
+		),
+		(magpie::rbac::EffectiveEnforcement::Observe, groups) => (
+			guardrail::Mode::LogOnly,
+			format!("group:{}", groups.join(",")),
+		),
 	}
 }
 

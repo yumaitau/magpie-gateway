@@ -15,6 +15,7 @@ pub mod evidence;
 pub mod guardrail;
 pub mod identity;
 pub mod policy;
+pub mod pools;
 pub mod presidio;
 pub mod pspf;
 pub mod rbac;

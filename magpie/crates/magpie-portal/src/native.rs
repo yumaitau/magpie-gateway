@@ -105,13 +105,17 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Response 
 		.filter(|n| access::allows(&state, &session, access::page_permission(n.path)))
 		.map(|n| json!({"href": n.path, "label": n.label}))
 		.collect();
+	let (enforcing, trial) = super::cohort_names(&state);
 	let mut response = Json(json!({
 			"name": session.name,
 						"subject": session.subject, "email": session.email, "canLogout": true,
 						"canReadGateway": access::allows(&state, &session, Permission::ReadGatewayConfig),
 						"canManagePeople": access::allows(&state, &session, Permission::ManageAccess),
+						"canUseSubscriptionPools": crate::pools::can_use(&state, &session),
 			"roles": access::role_names(&state, &session),
 			"mode": load_settings(&state).guardrail_mode.as_str(),
+			"enforcingGroups": enforcing,
+			"trialGroups": trial,
 			"canChangeEnforcement": access::allows(&state, &session, Permission::ChangeEnforcement),
 			"links": links,
 	}))

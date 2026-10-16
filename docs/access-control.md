@@ -49,13 +49,28 @@ be edited. Existing `MAGPIE_ROLE_*` mappings and the `Magpie.*` app roles create
 `./magpie.sh sso` seed the initial groups; after that,
 the UI owns them. Changes survive restarts and redeployments.
 
-## Enforcement and audit
+## Enforcement for a group
 
-Use **Settings → Guardrail mode → Apply mode** to switch Log-only or Enforcement
-without a deployment. This requires Change enforcement mode and is independent
-of permission to edit policy settings. It affects new requests immediately;
-in-flight requests retain their original decision. Mode changes and all access
-changes are committed atomically with their audit events.
+Each group has its own enforcement setting:
+
+| Setting | What traffic for that group does |
+| --- | --- |
+| Follow organisation | Uses the organisation default in Settings |
+| Trial | Records the would-be action and leaves traffic unchanged |
+| Enforcing | Applies the configured actions to this group only |
+
+Match people by their signed-in user, or add the gateway key name (the name on
+the virtual API key, such as `justin`). A key named `justin` also matches a
+member whose email starts with `justin@`. Requests with no person follow the
+organisation default. When someone is in both an enforcing group and a trial
+group, enforcement wins. Saving one group does not change the others, and a
+group can be switched back to trial immediately.
+
+Use **Settings → Guardrail mode → Apply mode** to switch the organisation
+default between Log-only and Enforcement. This requires Change enforcement mode
+and is independent of permission to edit policy settings. It affects new
+requests that are not covered by a group's own setting. Mode changes and all
+access changes are committed atomically with their audit events.
 
 Runtime mode, roles, groups and portal users are stored separately from imported
 policy documents. Policy imports and rollbacks cannot overwrite them. Imports

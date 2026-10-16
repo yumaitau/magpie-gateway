@@ -143,7 +143,7 @@ test('DLP tuning compares an exact exception without saving the sample',async({p
  await page.getByRole('button',{name:'Tune email',exact:true}).first().click();
  await expect(page.getByLabel('1. Choose a detector',{exact:true})).toHaveValue('email');
  await page.getByLabel('1. Choose a detector',{exact:true}).selectOption('phone');
- await page.getByText('Exact-value exceptions and advanced options',{exact:true}).click();
+ await page.getByText('Exact-value exceptions and other actions',{exact:true}).click();
  await page.getByLabel('Exact value to ignore',{exact:true}).fill('0412 345 678');
  await page.getByLabel('Exception label',{exact:true}).fill('Synthetic phone fixture');
  await page.getByLabel('Synthetic sample text',{exact:true}).fill('Phone 0412 345 678');

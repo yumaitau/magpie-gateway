@@ -119,6 +119,44 @@ pub struct AccessRole {
 	pub permissions: Vec<Permission>,
 }
 
+/// How a group's own traffic is handled, relative to the organisation default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroupEnforcement {
+	/// Use the organisation guardrail mode.
+	#[default]
+	Follow,
+	/// Apply policy actions for this group even when the organisation is in a trial.
+	Enforce,
+	/// Record what would happen and leave this group's traffic unchanged.
+	#[serde(rename = "log-only")]
+	Observe,
+}
+
+impl std::str::FromStr for GroupEnforcement {
+	type Err = crate::Error;
+
+	fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+		match value {
+			"follow" => Ok(Self::Follow),
+			"enforce" => Ok(Self::Enforce),
+			"log-only" => Ok(Self::Observe),
+			_ => Err(crate::Error::Msg(
+				"Choose follow, log-only or enforce for the group.".into(),
+			)),
+		}
+	}
+}
+
+/// Result of matching a request to group settings. The organisation default
+/// applies when this is [`EffectiveEnforcement::Organisation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveEnforcement {
+	Organisation,
+	Enforce,
+	Observe,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserGroup {
 	pub id: String,
@@ -126,6 +164,12 @@ pub struct UserGroup {
 	pub roles: Vec<String>,
 	pub members: Vec<String>,
 	pub identity_groups: Vec<String>,
+	/// Gateway key names and other traffic actors. A request's actor is the
+	/// virtual API key name the proxy sends.
+	#[serde(default)]
+	pub traffic_names: Vec<String>,
+	#[serde(default)]
+	pub enforcement: GroupEnforcement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +230,8 @@ impl AccessControl {
 						}
 						groups
 					},
+					traffic_names: vec![],
+					enforcement: GroupEnforcement::Follow,
 				})
 				.collect(),
 		}
@@ -209,6 +255,46 @@ impl AccessControl {
 				})
 			})
 			.collect()
+	}
+
+	/// Resolve traffic for `actor` (a gateway key name, user id, email or display name).
+	/// `presented_groups` are identity-provider group ids supplied with the request.
+	/// Enforcing wins when the person is in more than one explicit group.
+	/// Requests with no person (`gateway`, `unknown` or blank) follow the organisation.
+	pub fn effective_enforcement(
+		&self,
+		users: &[PortalUser],
+		actor: &str,
+		presented_groups: &[&str],
+	) -> (EffectiveEnforcement, Vec<String>) {
+		let actor = actor.trim();
+		if actor.is_empty()
+			|| actor.eq_ignore_ascii_case("gateway")
+			|| actor.eq_ignore_ascii_case("unknown")
+		{
+			return (EffectiveEnforcement::Organisation, Vec::new());
+		}
+		let mut enforce = Vec::new();
+		let mut observe = Vec::new();
+		for group in &self.groups {
+			if !group.covers(users, actor, presented_groups) {
+				continue;
+			}
+			match group.enforcement {
+				GroupEnforcement::Follow => {},
+				GroupEnforcement::Enforce => enforce.push(group.id.clone()),
+				GroupEnforcement::Observe => observe.push(group.id.clone()),
+			}
+		}
+		enforce.sort();
+		observe.sort();
+		if !enforce.is_empty() {
+			(EffectiveEnforcement::Enforce, enforce)
+		} else if !observe.is_empty() {
+			(EffectiveEnforcement::Observe, observe)
+		} else {
+			(EffectiveEnforcement::Organisation, Vec::new())
+		}
 	}
 
 	pub fn allows(&self, session: &SessionRecord, permission: Permission) -> bool {
@@ -265,9 +351,80 @@ impl AccessControl {
 			{
 				return Err(fail("Remove the role from its groups before deleting it."));
 			}
+			if group.traffic_names.len() > 40
+				|| group
+					.traffic_names
+					.iter()
+					.any(|name| !valid_traffic_name(name))
+			{
+				return Err(fail(
+					"Gateway key names use letters, numbers and . _ - @, with at most 40 names of up to 100 characters.",
+				));
+			}
 		}
 		Ok(())
 	}
+}
+
+impl UserGroup {
+	fn covers(&self, users: &[PortalUser], actor: &str, presented_groups: &[&str]) -> bool {
+		let actor_is = |value: &str| value.trim().eq_ignore_ascii_case(actor);
+		if self.members.iter().any(|member| actor_is(member))
+			|| self.traffic_names.iter().any(|name| actor_is(name))
+		{
+			return true;
+		}
+		if self.identity_groups.iter().any(|id| {
+			actor_is(id)
+				|| presented_groups
+					.iter()
+					.any(|group| group.trim().eq_ignore_ascii_case(id.trim()))
+		}) {
+			return true;
+		}
+		self.members.iter().any(|member| {
+			users.iter().any(|user| {
+				&user.subject == member
+					&& (actor_is(&user.email)
+						|| actor_is(&user.name)
+						|| user
+							.email
+							.split('@')
+							.next()
+							.is_some_and(|local| local.len() >= 3 && actor_is(local)))
+			})
+		})
+	}
+}
+
+pub fn traffic_names_from_lines(text: &str) -> Result<Vec<String>> {
+	let mut names = Vec::new();
+	for line in text.lines() {
+		let name = line.trim();
+		if name.is_empty() {
+			continue;
+		}
+		if !valid_traffic_name(name) || names.len() >= 40 {
+			return Err(crate::Error::Msg(
+				"Gateway key names use letters, numbers and . _ - @, with at most 40 names of up to 100 characters.".into(),
+			));
+		}
+		if !names
+			.iter()
+			.any(|existing: &String| existing.eq_ignore_ascii_case(name))
+		{
+			names.push(name.to_string());
+		}
+	}
+	Ok(names)
+}
+
+fn valid_traffic_name(name: &str) -> bool {
+	!name.is_empty()
+		&& name.len() <= 100
+		&& name
+			.chars()
+			.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -304,5 +461,66 @@ mod tests {
 		assert!(!access.allows(&session, Permission::ChangeEnforcement));
 		session.identity_groups = vec!["Magpie.Owner".into()];
 		assert!(ACTIONS.iter().all(|(p, _, _)| access.allows(&session, *p)));
+	}
+
+	#[test]
+	fn group_enforcement_is_per_person_and_enforce_wins() {
+		let user = PortalUser {
+			subject: "example-user".into(),
+			name: "Alex Nguyen".into(),
+			email: "alex.nguyen@example.gov.au".into(),
+			last_login: String::new(),
+			disabled: false,
+		};
+		let mut access = AccessControl::defaults(&RoleMap::default());
+		access.groups.push(UserGroup {
+			id: "pilot".into(),
+			name: "Pilot".into(),
+			roles: vec![],
+			members: vec!["example-user".into()],
+			identity_groups: vec!["contractors".into()],
+			traffic_names: vec!["justin".into()],
+			enforcement: GroupEnforcement::Enforce,
+		});
+		access.groups.push(UserGroup {
+			id: "hold".into(),
+			name: "Hold".into(),
+			roles: vec![],
+			members: vec![],
+			identity_groups: vec![],
+			traffic_names: vec!["justin".into()],
+			enforcement: GroupEnforcement::Observe,
+		});
+		let users = [user];
+		assert_eq!(
+			access.effective_enforcement(&users, "gateway", &[]).0,
+			EffectiveEnforcement::Organisation
+		);
+		assert_eq!(
+			access.effective_enforcement(&users, "justin", &[]).0,
+			EffectiveEnforcement::Enforce
+		);
+		assert_eq!(
+			access.effective_enforcement(&users, "alex.nguyen", &[]).0,
+			EffectiveEnforcement::Enforce
+		);
+		assert_eq!(
+			access.effective_enforcement(&users, "Alex Nguyen", &[]).0,
+			EffectiveEnforcement::Enforce
+		);
+		let (mode, groups) = access.effective_enforcement(&users, "other", &["contractors"]);
+		assert_eq!(mode, EffectiveEnforcement::Enforce);
+		assert_eq!(groups, vec!["pilot".to_string()]);
+		access.groups.retain(|group| group.id != "pilot");
+		assert_eq!(
+			access.effective_enforcement(&users, "justin", &[]).0,
+			EffectiveEnforcement::Observe
+		);
+		let stored = serde_json::from_str::<UserGroup>(
+			r#"{"id":"saved","name":"Saved","roles":[],"members":[],"identity_groups":[]}"#,
+		)
+		.unwrap();
+		assert_eq!(stored.enforcement, GroupEnforcement::Follow);
+		assert!(stored.traffic_names.is_empty());
 	}
 }

@@ -11,6 +11,7 @@
 #   ./magpie.sh report <client>           download the audit log and register
 #   ./magpie.sh kubectl <client> <args>   kubectl in the magpie namespace
 #   ./magpie.sh use <client> [person]     point this machine's coding agents at the gateway
+#   ./magpie.sh doctor <client> [person]  check why this machine is or is not connected
 #   ./magpie.sh unuse                     undo use
 #   ./magpie.sh down <client>             destroy everything
 #
@@ -913,7 +914,7 @@ cmd_kubectl() {
 # Codex, opencode and Copilot in VS Code. The key is stored once in
 # ~/.config/magpie/<client>.key and each tool reads it from there. Every file
 # is backed up once to <file>.before-magpie, and unuse removes only what use
-# added.
+# added. use refuses to change those files when the gateway rejects the key.
 MAGPIE_HOME="${MAGPIE_HOME:-$HOME/.config/magpie}"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
@@ -958,14 +959,92 @@ codex_strip() { # remove our blocks and restore the lines use commented out
 	rm -f "$tmp"
 }
 
+# Keep a copy when the current file is not already aimed at this gateway.
+# The first before-magpie backup is left untouched.
+preserve_current() { # preserve_current FILE NEEDLE
+	local file="$1" needle="$2" stamp
+	[[ -f $file ]] || return 0
+	grep -F -q "$needle" "$file" 2>/dev/null && return 0
+	stamp="$(date +%Y%m%d%H%M%S)"
+	cp -p "$file" "$file.magpie-replaced-$stamp"
+	say "  kept the current file as $(basename "$file").magpie-replaced-$stamp"
+}
+
+gateway_accepts_key() { # gateway_accepts_key BASE KEYFILE
+	local code
+	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+		-H "Authorization: Bearer $(<"$2")" "$1/v1/models")" || code="000"
+	[[ $code == 200 ]]
+}
+
+cmd_doctor() {
+	load "${1:-}"
+	local person="${2:-$(first_person)}"
+	[[ -n $person && -e "$DIR/keys/$person.key" ]] || die "Usage: ./magpie.sh doctor $CLIENT [person]. People: $(people | tr '\n' ' ')"
+	need curl jq
+	local base failed=0 code current
+	base="$(url)"
+	result() {
+		if [[ $2 == ok ]]; then printf '  ok    %s\n' "$1"; else
+			printf '  FAIL  %s  %s\n' "$1" "${3:-}"
+			failed=1
+		fi
+	}
+	step "This machine and $base ($person)"
+	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$base/healthz" || true)"
+	[[ $code == 200 ]] && result "portal answers" ok || result "portal answers" fail "HTTP ${code:-000}"
+	if gateway_accepts_key "$base" "$DIR/keys/$person.key"; then
+		result "gateway accepts $person's key" ok
+	else
+		result "gateway accepts $person's key" fail "The running proxy does not have engagements/$CLIENT/keys/$person.key. Run: ./magpie.sh up $CLIENT"
+	fi
+	if [[ -f $MAGPIE_HOME/$CLIENT.key ]]; then
+		if [[ $(sha256 "$(<"$MAGPIE_HOME/$CLIENT.key")") == $(sha256 "$(<"$DIR/keys/$person.key")") ]]; then
+			result "installed key matches $person" ok
+		else
+			result "installed key matches $person" fail "$MAGPIE_HOME/$CLIENT.key is a different key. use replaces it only after the gateway accepts the engagement key."
+		fi
+	else
+		result "installed key matches $person" fail "No key installed yet. ./magpie.sh use copies it after the gateway accepts it."
+	fi
+	if [[ -f $CLAUDE_SETTINGS ]] || command -v claude >/dev/null 2>&1; then
+		current="$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$CLAUDE_SETTINGS" 2>/dev/null || true)"
+		if [[ $current == "$base" ]]; then result "Claude Code uses the gateway" ok
+		else result "Claude Code uses the gateway" fail "ANTHROPIC_BASE_URL is ${current:-unset}, not $base"
+		fi
+	fi
+	if [[ -f $CODEX_CONFIG ]] || command -v codex >/dev/null 2>&1; then
+		if [[ -f $CODEX_CONFIG ]] && grep -F -q "base_url = \"$base/v1\"" "$CODEX_CONFIG"; then
+			result "Codex uses the gateway" ok
+		else
+			result "Codex uses the gateway" fail "config does not set base_url to $base/v1"
+		fi
+	fi
+	say "  Cursor is not changed by this command. In Cursor Settings > Models, set Override OpenAI Base URL to $base/v1."
+	say "  Cursor ignores shell variables. Use the key file use installs, then start a new chat."
+	if ((failed == 0)); then
+		say ""
+		say "This machine can reach the gateway with $person's key."
+	else
+		say ""
+		die "This machine is not ready. Agent settings were not changed."
+	fi
+}
+
 cmd_use() {
 	load "${1:-}"
 	local person="${2:-$(first_person)}"
 	[[ -e "$DIR/keys/$person.key" ]] || die "Usage: ./magpie.sh use $CLIENT <person>. People: $(people | tr '\n' ' ')"
 	need jq curl
-	local base keyfile opus sonnet haiku
+	local base keyfile opus sonnet haiku extra=""
 	base="$(url)"
 	curl -fs -o /dev/null "$base/healthz" || die "$base is not answering. Fix the gateway before pointing agents at it."
+	if ! gateway_accepts_key "$base" "$DIR/keys/$person.key"; then
+		if [[ -f $MAGPIE_HOME/$CLIENT.key ]] && [[ $(sha256 "$(<"$MAGPIE_HOME/$CLIENT.key")") != $(sha256 "$(<"$DIR/keys/$person.key")") ]]; then
+			extra=" This machine's copy in $MAGPIE_HOME/$CLIENT.key is a different key and was left in place."
+		fi
+		die "The gateway at $base rejected the key for $person. Coding agents on this machine were not changed.${extra} Run ./magpie.sh up $CLIENT so the running proxy loads engagements/$CLIENT/keys/$person.key, then ./magpie.sh use $CLIENT $person. ./magpie.sh doctor $CLIENT $person prints the full check."
+	fi
 	opus="$(first_model 'claude-opus*')"
 	sonnet="$(first_model 'claude-sonnet*')"
 	haiku="$(first_model 'claude-haiku*')"
@@ -977,6 +1056,7 @@ cmd_use() {
 
 	step "Claude Code ($CLAUDE_SETTINGS)"
 	mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+	preserve_current "$CLAUDE_SETTINGS" "$base"
 	backup_once "$CLAUDE_SETTINGS"
 	json_edit "$CLAUDE_SETTINGS" --arg base "$base" --arg helper "cat '$keyfile'" --arg client "$CLIENT" \
 		--arg opus "$opus" --arg sonnet "$sonnet" --arg haiku "$haiku" '
@@ -990,6 +1070,7 @@ cmd_use() {
 	if [[ -f $CODEX_CONFIG ]] || command -v codex >/dev/null 2>&1; then
 		step "Codex ($CODEX_CONFIG)"
 		mkdir -p "$(dirname "$CODEX_CONFIG")"
+		preserve_current "$CODEX_CONFIG" "$base/v1"
 		touch "$CODEX_CONFIG"
 		backup_once "$CODEX_CONFIG"
 		codex_strip
@@ -1055,6 +1136,7 @@ cmd_use() {
 
 	step "Done"
 	say "New sessions use the gateway. Sessions already running keep their old settings."
+	say "Cursor: set Override OpenAI Base URL to $base/v1 and paste the key from $keyfile. Cursor ignores shell variables. Start a new chat after saving."
 	say "Undo with: ./magpie.sh unuse"
 }
 
@@ -1116,7 +1198,7 @@ cmd_report() {
 # ---------------------------------------------------------------- main
 
 usage() {
-	sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -1131,6 +1213,7 @@ main() {
 	connect) cmd_connect "$@" ;;
 	sso) cmd_sso "$@" ;;
 	check) cmd_check "$@" ;;
+	doctor) cmd_doctor "$@" ;;
 	uitest) cmd_uitest "$@" ;;
 	report) cmd_report "$@" ;;
 	kubectl) cmd_kubectl "$@" ;;

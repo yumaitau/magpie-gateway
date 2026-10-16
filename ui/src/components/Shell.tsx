@@ -45,7 +45,7 @@ import {
 	useRuntimeInfo,
 	useTrafficConfigData
 } from '@/hooks';
-import { isMagpie, useMagpieSession } from '@/magpie';
+import { enforcementLabel, isMagpie, useMagpieSession } from '@/magpie';
 import { helpTopic } from '@/pages/Help';
 
 type NavItemConfig = {
@@ -132,6 +132,9 @@ export function Shell() {
 					title: 'Workspace',
 					items: [
 						{ to: '/account', label: 'My account', icon: UserRound },
+						...(magpie.data?.canUseSubscriptionPools
+							? [{ to: '/llm/subscription-pools', label: 'Subscription pools', icon: Boxes }]
+							: []),
 						{ to: '/help', label: 'Getting started & help', icon: BookOpen },
 						...(magpie.data?.canManagePeople
 							? [{ to: '/people', label: 'People', icon: UserRound }]
@@ -253,12 +256,20 @@ export function Shell() {
 						{isMagpie &&
 							magpie.data &&
 							(magpie.data.links.some(item => item.href === '/settings') ? (
-								<Link className="magpie-mode" to="/governance/$page" params={{ page: 'settings' }}>
-									{magpie.data.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement'}
+								<Link
+									className="magpie-mode"
+									to="/governance/$page"
+									params={{ page: 'settings' }}
+									title="Open settings to enforce one group, or the organisation default. A group can return to trial without changing the others."
+								>
+									{enforcementLabel(magpie.data)}
 								</Link>
 							) : (
-								<span className="magpie-mode">
-									{magpie.data.mode === 'log-only' ? 'Magpie log-only' : 'Magpie enforcement'}
+								<span
+									className="magpie-mode"
+									title="The organisation default. An administrator can enforce one group without changing everyone else."
+								>
+									{enforcementLabel(magpie.data)}
 								</span>
 							))}
 						{currentUser && (
@@ -507,6 +518,7 @@ function navigationGroups(options: {
 const essentialPaths = new Set([
 	'/',
 	'/account',
+	'/llm/subscription-pools',
 	'/help',
 	'/dlp-tuning',
 	'/people',
