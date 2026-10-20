@@ -639,7 +639,21 @@ fn log_name(
 	attributes: &BTreeMap<String, Value>,
 	body: Option<&Value>,
 ) -> String {
-	let body = body.and_then(Value::as_str).unwrap_or("");
+	// A body is free text, so it names the event only when it reads like one,
+	// such as Claude Code's `claude_code.api_request`.
+	let body = body
+		.and_then(Value::as_str)
+		.map(str::trim)
+		.filter(|body| {
+			body.split('.').count() > 1
+				&& body.split('.').all(|part| {
+					!part.is_empty()
+						&& part
+							.bytes()
+							.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+				})
+		})
+		.unwrap_or("");
 	[text(attributes, "event.name"), event_name, body]
 		.into_iter()
 		.map(str::trim)

@@ -145,13 +145,13 @@ export function DlpTuningPage() {
 						<strong>
 							Organisation default: {query.data.mode === 'log-only' ? 'Trial' : 'Enforcing'}
 						</strong>
-						. A trial records the action and still lets the text through. Enforcing one group does not
-						have to cover everyone.{' '}
+						. A trial records the action and still lets the text through. Enforcing one group does
+						not have to cover everyone.{' '}
 						<Link to="/governance/$page" params={{ page: 'settings' }}>
 							Choose who is enforced
 						</Link>
-						. This test checks local DLP only. Model approvals, routing, protective markings and prompt
-						injection may also block a request.
+						. This test checks local DLP only. Model approvals, routing, protective markings and
+						prompt injection may also block a request.
 					</p>
 					<details className="schema-details">
 						<summary>Which detector is causing the problem?</summary>

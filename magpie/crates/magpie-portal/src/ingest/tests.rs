@@ -453,3 +453,14 @@ async fn the_router_serves_the_otlp_paths() {
 		.unwrap();
 	assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
+
+#[test]
+fn a_free_text_body_never_names_the_event() {
+	let none = BTreeMap::new();
+	let name = |body: &str| log_name("", &none, Some(&json!(body)));
+	assert_eq!(name("claude_code.api_request"), "claude_code.api_request");
+	assert_eq!(name("hunter2"), "log");
+	assert_eq!(name("TFN:123456782"), "log");
+	assert_eq!(name("a..b"), "log");
+	assert_eq!(name("rm -rf /tmp/x"), "log");
+}

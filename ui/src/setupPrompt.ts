@@ -20,8 +20,8 @@ export function setupPrompt(context: {
 				: context.client === 'OpenCode'
 					? 'For OpenCode, add a Magpie provider using the configuration schema supported by the installed version. Reference MAGPIE_API_KEY from the environment and use the gateway /v1 endpoint.'
 					: context.client === 'Cursor'
-					? 'For Cursor, open Settings > Models, enable Override OpenAI Base URL and set it to the gateway origin plus /v1. Use the gateway key as the OpenAI API key and add the gateway model as a custom model. Cursor ignores shell environment variables, so exporting a base URL does not connect this IDE.'
-					: 'Use the installed agent’s current gateway/custom-provider settings. Claude Code needs Messages; Codex needs Responses; OpenCode needs a compatible provider configuration. If this is Cursor, set Override OpenAI Base URL to the gateway origin plus /v1. Check the installed version’s documentation. Cursor ignores shell environment variables.';
+						? 'For Cursor, open Settings > Models, enable Override OpenAI Base URL and set it to the gateway origin plus /v1. Use the gateway key as the OpenAI API key and add the gateway model as a custom model. Cursor ignores shell environment variables, so exporting a base URL does not connect this IDE.'
+						: 'Use the installed agent’s current gateway/custom-provider settings. Claude Code needs Messages; Codex needs Responses; OpenCode needs a compatible provider configuration. If this is Cursor, set Override OpenAI Base URL to the gateway origin plus /v1. Check the installed version’s documentation. Cursor ignores shell environment variables.';
 	return `Set up ${client} on this machine to use Magpie Gateway at ${JSON.stringify(context.gateway)}. Do the setup and test it, not just explain it.
 
 ${selection}
