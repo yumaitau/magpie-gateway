@@ -4,7 +4,8 @@ Magpie sends its audit log to any OpenTelemetry collector or backend that
 accepts OTLP/HTTP JSON logs. It uses the standard exporter variables and the
 [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/),
 so Magpie policy decisions sit next to Claude Platform, Claude Code and gateway
-traces in the same tools.
+traces in the same tools. To bring agent telemetry into Magpie instead, see
+[agent telemetry](agent-telemetry.md).
 
 ## Configure
 

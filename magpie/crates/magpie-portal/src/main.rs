@@ -92,6 +92,7 @@ async fn main() {
 		public_url: env("MAGPIE_PUBLIC_URL").unwrap_or_default(),
 		role_map,
 		webhook_token: env("MAGPIE_WEBHOOK_TOKEN").unwrap_or_default(),
+		otlp_token: env("MAGPIE_OTLP_TOKEN").unwrap_or_default(),
 		bootstrap_models: env("MAGPIE_BOOTSTRAP_MODELS")
 			.unwrap_or_default()
 			.split(',')

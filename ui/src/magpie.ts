@@ -14,7 +14,9 @@ export type MagpieSession = {
 	trialGroups?: string[];
 	links: { href: string; label: string }[];
 };
-export function enforcementLabel(session: Pick<MagpieSession, 'mode' | 'enforcingGroups' | 'trialGroups'>) {
+export function enforcementLabel(
+	session: Pick<MagpieSession, 'mode' | 'enforcingGroups' | 'trialGroups'>
+) {
 	const enforcing = session.enforcingGroups?.length ?? 0;
 	const trial = session.trialGroups?.length ?? 0;
 	if (session.mode === 'log-only') {

@@ -7,6 +7,7 @@ mod accounts;
 pub mod alerts;
 mod australia;
 mod controls;
+mod ingest;
 pub mod model_catalog;
 mod native;
 pub mod otlp;
@@ -65,6 +66,8 @@ pub struct Config {
 	pub role_map: RoleMap,
 	/// When set, the proxy must send it as `x-magpie-webhook-token` on guardrail and MCP check calls.
 	pub webhook_token: String,
+	/// Bearer token agents send to the OTLP receiver. Empty turns the receiver off.
+	pub otlp_token: String,
 	/// Models the deployment routes to, as (name, region). Each gets a provider
 	/// record and an approval on first start, so day-one traffic is not denied.
 	pub bootstrap_models: Vec<(String, String)>,
@@ -240,6 +243,7 @@ pub fn router(state: AppState) -> Router {
 		.merge(native::routes())
 		.merge(accounts::routes())
 		.merge(pools::routes())
+		.merge(ingest::routes())
 		.route(
 			"/api/magpie/model-catalog",
 			get(model_catalog::get).post(model_catalog::sync),
