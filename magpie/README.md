@@ -26,8 +26,11 @@ sign-on; set `MAGPIE_PUBLIC_URL` behind a proxy. `MAGPIE_ROLE_OWNERS`,
 map IdP group IDs or app-role values to portal roles. The portal will
 not start without one way to sign in, unless `MAGPIE_DEMO=1`.
 `MAGPIE_WEBHOOK_TOKEN` makes the guardrail and MCP check routes require
-the same value in `x-magpie-webhook-token`. `MAGPIE_BOOTSTRAP_MODELS`
-(`name=region,...`) approves the deployment's models on first start.
+the same value in `x-magpie-webhook-token`. `MAGPIE_OTLP_TOKEN` turns on
+the OTLP receiver at `/otlp` for Claude Platform, Claude Code, Codex and
+Grok telemetry; see [agent telemetry](../docs/agent-telemetry.md).
+`MAGPIE_BOOTSTRAP_MODELS` (`name=region,...`) approves the deployment's
+models on first start.
 `MAGPIE_APPROVED_PROTECTED` (`bedrock:model-id,...`) adds destinations
 allowed for PROTECTED traffic, merged into settings on every start.
 A `postgres://` URL is refused; use a SQLite file or `:memory:`.

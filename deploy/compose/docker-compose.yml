@@ -38,6 +38,8 @@ services:
       MAGPIE_SEED_EXAMPLES: "0"
       MAGPIE_MOCK_IDP: "0"
       MAGPIE_ADMIN_PASSWORD: ${MAGPIE_ADMIN_PASSWORD:?set MAGPIE_ADMIN_PASSWORD}
+      # Bearer token for agent OpenTelemetry at /otlp. Empty turns the receiver off.
+      MAGPIE_OTLP_TOKEN: ${MAGPIE_OTLP_TOKEN:-}
     volumes:
       - portal-data:/data
     tmpfs:

@@ -106,8 +106,8 @@ async fn refresh_rotates_credentials_without_overwriting_subscription_edits() {
 	));
 }
 
-pub(crate) fn test_state() -> AppState {
-	let state = crate::state(Config {
+pub(crate) fn test_config() -> Config {
+	Config {
 		gateway_admin_url: String::new(),
 		gateway_ui_dir: String::new(),
 		guardrail_mode: guardrail::Mode::LogOnly,
@@ -124,6 +124,7 @@ pub(crate) fn test_state() -> AppState {
 		public_url: String::new(),
 		role_map: Default::default(),
 		webhook_token: String::new(),
+		otlp_token: String::new(),
 		bootstrap_models: vec![("model".into(), "global".into())],
 		bootstrap_protected: vec![],
 		bootstrap_owner: "owner".into(),
@@ -134,8 +135,11 @@ pub(crate) fn test_state() -> AppState {
 		idle: Duration::from_secs(3600),
 		absolute: Duration::from_secs(86400),
 		listen: "127.0.0.1:0".into(),
-	})
-	.unwrap();
+	}
+}
+
+pub(crate) fn test_state() -> AppState {
+	let state = crate::state(test_config()).unwrap();
 	let store = state.inner.store.lock().unwrap();
 	for subject in ["owner", "colleague", "outsider"] {
 		store
