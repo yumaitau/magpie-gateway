@@ -6,7 +6,10 @@ savePrefix: '='
 # Network-restricted environments should warn and use the installed version.
 pmOnFail: warn
 
-# Monaco and Ajv currently resolve vulnerable transitive releases.
+# Monaco, Ajv, TanStack Router and PostCSS currently resolve vulnerable transitive releases.
 overrides:
   ajv>fast-uri: 3.1.8
-  monaco-editor>dompurify: 3.4.16
+  monaco-editor>dompurify: 3.4.17
+  seroval: 1.6.8
+  seroval-plugins: 1.6.8
+  source-map-js: 1.2.2
