@@ -151,7 +151,7 @@ opentelemetry-http = "0.33"
 opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "internal-logs", "trace", "grpc-tonic", "logs"] }
 opentelemetry-proto = { version = "0.33", features = ["gen-tonic", "logs"] }
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio", "logs"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 pem = "4.0.0"
 percent-encoding = "2.3"
 phonenumber = "0.3"
@@ -188,7 +188,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "rustls",
 ] }
-rstest = "0.27"
+rstest = "0.28"
 rust_decimal = { version = "1", default-features = false }
 mimalloc = { version = "0.1", features = ["v3", "no_thp"] }
 mime_guess = "2.0"
@@ -213,7 +213,7 @@ sha1 = "0.11"
 sha2 = "0.11"
 shellexpand = "3.1"
 socket2 = "0.6"
-spiffe = { version = "0.16", default-features = false, features = ["workload-api", "x509-source", "x509", "transport-grpc", "tracing"] }
+spiffe = { version = "0.18", default-features = false, features = ["workload-api", "x509-source", "x509", "transport-grpc", "tracing"] }
 split-iter = "0.1"
 sse-stream = "0.3"
 sqlx = { version = "0.9", default-features = false, features = [
@@ -281,7 +281,7 @@ tikv-jemallocator = { version = "0.7", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
 jemalloc_pprof = { version = "0.9", features = ["symbolize"] }
-protox = "0.9"
+protox = "0.10"
 async-compression = { version = "0.4", features = [
     "brotli",
     "zlib",
