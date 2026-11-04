@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"istio.io/istio/pkg/ptr"
 	corev1 "k8s.io/api/core/v1"
@@ -85,6 +86,11 @@ func TestConformance(t *testing.T) {
 		options.SkipTests = append(options.SkipTests, string(features.GatewayStaticAddressesFeature.Name))
 	}
 	options.Debug = true
+
+	// The TLSRoute tests that expect a rejected connection (e.g. TLSRouteInvalidBackendRefNonexistent)
+	// retry dials until MaxTimeToConsistency. On slow CI runners the first dials to the freshly
+	// programmed listener can hang until cancelled, so allow more headroom than the 30s default.
+	options.TimeoutConfig.MaxTimeToConsistency = max(options.TimeoutConfig.MaxTimeToConsistency, 60*time.Second)
 
 	t.Logf("Running conformance tests with\nprofiles: %+v %v\n", profiles, options.RunTest)
 	conformance.RunConformanceWithOptions(t, options)
