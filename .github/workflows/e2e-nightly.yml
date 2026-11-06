@@ -1,0 +1,154 @@
+name: E2E nightly
+
+# End-to-end and browser tests run here only, never in push or pull-request CI.
+# Moved from pull_request.yml (ui-lint Playwright steps, controller-e2e) and
+# magpie.yml (axe, native-ui).
+on:
+  schedule:
+    # 15:00 UTC = 02:00 AEDT / 01:00 AEST
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+  CARGO_BUILD_WARNINGS: deny
+  GO_VERSION: "1.27.1"
+
+jobs:
+  #### UI ####
+  ui-e2e:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      with:
+        node-version-file: ui/.nvmrc
+    - name: Install
+      run: |
+        corepack enable
+        pnpm install --frozen-lockfile
+    - name: Install Playwright browser
+      run: pnpm exec playwright install --with-deps chromium
+    - name: End-to-end tests
+      run: pnpm test:e2e
+
+  #### Controller ####
+  controller-e2e:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+        # git-restore-mtime needs full history to find each file's latest change.
+        fetch-depth: 0
+    - name: Set up controller toolchains
+      uses: ./.github/actions/controller-build-cache
+      with:
+        rust: "true"
+        go-version: "${{ env.GO_VERSION }}"
+        # Only postsubmit rolls the Rust build cache forward.
+        save: ${{ github.ref == 'refs/heads/main' }}
+    - name: Setup
+      run: TEST_MODE=e2e ./controller/test/setup/setup-kind-ci.sh
+    - name: E2E
+      run: |
+        CGO_ENABLED=0 PERSIST_INSTALL=true go test -trimpath -tags=e2e,agent,disable_pgv -v ./controller/test/e2e
+    - name: Verify Kind images
+      run: TEST_MODE=e2e ./controller/test/setup/verify-kind-images.sh
+    - name: Summary
+      run: |
+        echo '# E2E Timings\n'
+        cat controller/_test/ci-step-timings.log >> $GITHUB_STEP_SUMMARY
+
+  #### Magpie portal (from magpie.yml) ####
+  axe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the portal
+        run: cargo build --manifest-path magpie/Cargo.toml -p magpie-portal
+      - name: Install Playwright
+        working-directory: magpie/axe
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: axe
+        run: |
+          MAGPIE_DEMO=1 MAGPIE_SEED_EXAMPLES=1 MAGPIE_DATABASE_URL=:memory: \
+            MAGPIE_COOKIE_SECURE=0 MAGPIE_LISTEN=127.0.0.1:8088 \
+            ./magpie/target/debug/magpie-portal > /tmp/magpie-portal.log 2>&1 &
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            cat /tmp/magpie-portal.log
+            exit 1
+          fi
+          npm test --prefix magpie/axe
+
+  native-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+      - name: Build native UI and portal
+        run: |
+          npm install -g pnpm@11.20.0
+          pnpm --dir ui install --frozen-lockfile
+          VITE_MAGPIE=true pnpm --dir ui build
+          cargo build --manifest-path magpie/Cargo.toml -p magpie-portal
+      # Keep the browser runner on the same Node version as the existing axe job.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        working-directory: magpie/axe
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Native accounts and governance
+        run: |
+          node magpie/axe/native/mock-gateway.js > /tmp/mock-gateway.log 2>&1 &
+          MAGPIE_ADMIN_PASSWORD=local-preview-passphrase-12345 \
+            MAGPIE_SESSION_SECRET=local-preview-session-secret-1234567890 \
+            MAGPIE_HMAC_SECRET=local-preview-hmac-secret-1234567890 \
+            MAGPIE_DATABASE_URL=:memory: MAGPIE_COOKIE_SECURE=0 \
+            MAGPIE_LISTEN=127.0.0.1:18188 MAGPIE_PUBLIC_URL=http://127.0.0.1:18188 \
+            MAGPIE_GATEWAY_ADMIN_URL=http://127.0.0.1:18190 \
+            MAGPIE_GATEWAY_UI_DIR="$PWD/ui/dist" \
+            ./magpie/target/debug/magpie-portal > /tmp/native-portal.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18188/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          MAGPIE_NATIVE_URL=http://127.0.0.1:18188 \
+            npx --prefix magpie/axe playwright test --config=magpie/axe/playwright.config.js native/accounts.spec.js native/pools.spec.js
