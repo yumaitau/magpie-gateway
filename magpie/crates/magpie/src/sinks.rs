@@ -62,7 +62,9 @@ pub struct SinkStatus {
 
 impl Store {
 	pub fn audit_sinks(&self) -> Result<Vec<AuditSink>> {
-		let mut stmt = self.conn.prepare("SELECT body FROM audit_sinks ORDER BY id")?;
+		let mut stmt = self
+			.conn
+			.prepare("SELECT body FROM audit_sinks ORDER BY id")?;
 		let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 		rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
 	}
@@ -111,9 +113,11 @@ impl Store {
 
 	pub fn delete_audit_sink(&self, id: &str, actor: &str) -> Result<()> {
 		let tx = self.conn.unchecked_transaction()?;
-		self.conn
+		self
+			.conn
 			.execute("DELETE FROM audit_sinks WHERE id = ?1", [id])?;
-		self.conn
+		self
+			.conn
 			.execute("DELETE FROM audit_sink_cursors WHERE sink_id = ?1", [id])?;
 		self.append_audit(&AuditEvent::new(
 			"sinks",
@@ -146,13 +150,11 @@ impl Store {
 	}
 
 	pub fn audit_sink_batch(&self, sink_id: &str, limit: usize) -> Result<Vec<(i64, AuditEvent)>> {
-		let position: i64 = self
-			.conn
-			.query_row(
-				"SELECT COALESCE((SELECT position FROM audit_sink_cursors WHERE sink_id = ?1), 0)",
-				[sink_id],
-				|r| r.get(0),
-			)?;
+		let position: i64 = self.conn.query_row(
+			"SELECT COALESCE((SELECT position FROM audit_sink_cursors WHERE sink_id = ?1), 0)",
+			[sink_id],
+			|r| r.get(0),
+		)?;
 		let mut stmt = self.conn.prepare(
 			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry, rowid
 			 FROM audit_events WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",

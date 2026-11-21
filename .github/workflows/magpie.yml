@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,7 +48,7 @@ jobs:
         run: cargo test --manifest-path magpie/Cargo.toml
 
   deploy-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
@@ -81,7 +81,7 @@ jobs:
           terraform validate
 
   axe:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -117,7 +117,7 @@ jobs:
           npm test --prefix magpie/axe
 
   native-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -160,7 +160,7 @@ jobs:
             npx --prefix magpie/axe playwright test --config=magpie/axe/playwright.config.js native/accounts.spec.js native/pools.spec.js
 
   image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -214,7 +214,10 @@ jobs:
           image="ghcr.io/${owner}/magpie-gateway-portal"
           docker tag magpie-gateway-portal:ci "${image}:${GITHUB_SHA}"
           docker push "${image}:${GITHUB_SHA}"
-          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "${image}:${GITHUB_SHA}")"
+          # RepoDigests can also list the local build name (the containerd
+          # image store does this), so pick the ghcr entry rather than index 0.
+          digest="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${image}:${GITHUB_SHA}" \
+            | grep -m1 "^${image}@sha256:" || true)"
           case "${digest}" in
             ghcr.io/*@sha256:*) ;;
             *) echo "expected a ghcr digest, got: ${digest}" >&2; exit 1 ;;

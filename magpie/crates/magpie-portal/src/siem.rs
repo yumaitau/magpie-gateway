@@ -46,21 +46,21 @@ async fn deliver_all(state: &AppState) -> Result<(), String> {
 		let events: Vec<AuditEvent> = batch.into_iter().map(|(_, ev)| ev).collect();
 		match send_batch(&state.inner.gateway_client, &sink, &events).await {
 			Ok(()) => {
-				let _ = state.inner.store.lock().expect("db").audit_sink_record_result(
-					&sink.id,
-					Some(last_pos),
-					events.len(),
-					None,
-				);
+				let _ = state
+					.inner
+					.store
+					.lock()
+					.expect("db")
+					.audit_sink_record_result(&sink.id, Some(last_pos), events.len(), None);
 			},
 			Err((retryable, msg)) => {
 				let advance = if retryable { None } else { Some(last_pos) };
-				let _ = state.inner.store.lock().expect("db").audit_sink_record_result(
-					&sink.id,
-					advance,
-					0,
-					Some(&msg),
-				);
+				let _ = state
+					.inner
+					.store
+					.lock()
+					.expect("db")
+					.audit_sink_record_result(&sink.id, advance, 0, Some(&msg));
 			},
 		}
 	}
@@ -92,7 +92,10 @@ async fn acquire_sentinel_token(
 		if !resp.status().is_success() {
 			return Err((
 				true,
-				format!("Managed Identity token returned HTTP {}", resp.status().as_u16()),
+				format!(
+					"Managed Identity token returned HTTP {}",
+					resp.status().as_u16()
+				),
 			));
 		}
 		let body: Value = resp
@@ -102,7 +105,12 @@ async fn acquire_sentinel_token(
 		return body["access_token"]
 			.as_str()
 			.map(str::to_string)
-			.ok_or_else(|| (true, "Managed Identity response missing access_token.".to_string()));
+			.ok_or_else(|| {
+				(
+					true,
+					"Managed Identity response missing access_token.".to_string(),
+				)
+			});
 	}
 
 	if sink.tenant_id.trim().is_empty()
@@ -130,11 +138,19 @@ async fn acquire_sentinel_token(
 		])
 		.send()
 		.await
-		.map_err(|_| (true, "Microsoft Entra token endpoint unreachable.".to_string()))?;
+		.map_err(|_| {
+			(
+				true,
+				"Microsoft Entra token endpoint unreachable.".to_string(),
+			)
+		})?;
 	if !resp.status().is_success() {
 		return Err((
 			matches!(resp.status().as_u16(), 429 | 502 | 503 | 504),
-			format!("Entra token endpoint returned HTTP {}", resp.status().as_u16()),
+			format!(
+				"Entra token endpoint returned HTTP {}",
+				resp.status().as_u16()
+			),
 		));
 	}
 	let body: Value = resp
@@ -144,7 +160,12 @@ async fn acquire_sentinel_token(
 	body["access_token"]
 		.as_str()
 		.map(str::to_string)
-		.ok_or_else(|| (true, "Entra token response missing access_token.".to_string()))
+		.ok_or_else(|| {
+			(
+				true,
+				"Entra token response missing access_token.".to_string(),
+			)
+		})
 }
 
 async fn send_batch(
@@ -177,7 +198,12 @@ async fn send_batch(
 				.json(&records)
 				.send()
 				.await
-				.map_err(|_| (true, "Microsoft Sentinel DCE endpoint unreachable.".to_string()))?;
+				.map_err(|_| {
+					(
+						true,
+						"Microsoft Sentinel DCE endpoint unreachable.".to_string(),
+					)
+				})?;
 			let code = resp.status().as_u16();
 			if resp.status().is_success() {
 				Ok(())
@@ -335,7 +361,10 @@ fn validate_sink(sink: &AuditSink) -> Result<(), &'static str> {
 	if sink.name.trim().is_empty() || sink.name.len() > 100 {
 		return Err("Enter a sink name (up to 100 characters).");
 	}
-	if !matches!(sink.kind.as_str(), "sentinel" | "otlp" | "splunk" | "syslog") {
+	if !matches!(
+		sink.kind.as_str(),
+		"sentinel" | "otlp" | "splunk" | "syslog"
+	) {
 		return Err("Choose sentinel, otlp, splunk, or syslog.");
 	}
 	let ep = sink.endpoint.trim();
@@ -346,7 +375,10 @@ fn validate_sink(sink: &AuditSink) -> Result<(), &'static str> {
 		if sink.dcr_immutable_id.trim().is_empty() {
 			return Err("Microsoft Sentinel requires a Data Collection Rule (DCR) immutable ID.");
 		}
-		if !matches!(sink.auth_mode.as_str(), "managed-identity" | "client-credentials") {
+		if !matches!(
+			sink.auth_mode.as_str(),
+			"managed-identity" | "client-credentials"
+		) {
 			return Err("Choose managed-identity or client-credentials authentication for Sentinel.");
 		}
 		if sink.auth_mode == "client-credentials"

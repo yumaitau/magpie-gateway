@@ -320,7 +320,11 @@ impl Store {
 			.and_then(Value::as_str)
 			.unwrap_or("")
 			.trim();
-		let active = !deleted && scim_user.get("active").and_then(Value::as_bool).unwrap_or(true);
+		let active = !deleted
+			&& scim_user
+				.get("active")
+				.and_then(Value::as_bool)
+				.unwrap_or(true);
 		let mut affected = 0usize;
 		let portal_users = self.portal_users()?;
 		for user in portal_users {

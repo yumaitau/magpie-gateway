@@ -12,10 +12,7 @@ pub(super) fn routes() -> Router<AppState> {
 		.route("/api/magpie/identity", get(identity_overview))
 		.route("/api/magpie/identity/scim-token", post(rotate_scim_token))
 		.route("/api/magpie/identity/test-oidc", post(test_oidc_discovery))
-		.route(
-			"/api/magpie/identity/map-scim-group",
-			post(map_scim_group),
-		)
+		.route("/api/magpie/identity/map-scim-group", post(map_scim_group))
 		.route("/api/magpie/evidence", get(evidence_overview))
 		.route("/api/magpie/evidence.csv", get(evidence_csv))
 		.route("/api/magpie/evidence.pdf", get(evidence_pdf))
@@ -183,10 +180,7 @@ async fn rotate_scim_token(State(state): State<AppState>, headers: HeaderMap) ->
 		Ok(s) => s,
 		Err(r) => return r,
 	};
-	let token = format!(
-		"mp_scim_{}",
-		identity::start_pkce().verifier
-	);
+	let token = format!("mp_scim_{}", identity::start_pkce().verifier);
 	if state
 		.inner
 		.store
@@ -331,7 +325,10 @@ async fn map_scim_group(
 		.take(48)
 		.collect();
 	let group_id = if slug.is_empty() {
-		format!("entra-{}", &body.scim_group_id[..body.scim_group_id.len().min(8)])
+		format!(
+			"entra-{}",
+			&body.scim_group_id[..body.scim_group_id.len().min(8)]
+		)
 	} else {
 		format!("entra-{slug}")
 	};
@@ -446,7 +443,13 @@ async fn evidence_overview(
 	};
 	let settings = load_settings(&state);
 	let rules = load_rules(&state);
-	let stats = match state.inner.store.lock().expect("db").monthly_stats(from, to) {
+	let stats = match state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.monthly_stats(from, to)
+	{
 		Ok(s) => s,
 		Err(_) => {
 			return json_error(
@@ -501,9 +504,20 @@ async fn evidence_csv(
 		Ok(r) => r,
 		Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
 	};
-	let stats = match state.inner.store.lock().expect("db").monthly_stats(from, to) {
+	let stats = match state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.monthly_stats(from, to)
+	{
 		Ok(s) => s,
-		Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Could not aggregate audit events."),
+		Err(_) => {
+			return json_error(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				"Could not aggregate audit events.",
+			);
+		},
 	};
 	let rows = magpie::evidence::monthly_rows(&stats);
 	let _ = record_audit(
@@ -543,9 +557,20 @@ async fn evidence_pdf(
 		Ok(r) => r,
 		Err(e) => return json_error(StatusCode::BAD_REQUEST, e),
 	};
-	let stats = match state.inner.store.lock().expect("db").monthly_stats(from, to) {
+	let stats = match state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.monthly_stats(from, to)
+	{
 		Ok(s) => s,
-		Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Could not aggregate audit events."),
+		Err(_) => {
+			return json_error(
+				StatusCode::INTERNAL_SERVER_ERROR,
+				"Could not aggregate audit events.",
+			);
+		},
 	};
 	let rows = magpie::evidence::monthly_rows(&stats);
 	let _ = record_audit(
@@ -666,10 +691,16 @@ async fn evidence_pack_json(
 		"allow",
 		&format!("Exported signed assurance bundle ({period_label})"),
 	);
-	let filename = format!("magpie-assurance-pack-{}.json", Utc::now().format("%Y-%m-%d"));
+	let filename = format!(
+		"magpie-assurance-pack-{}.json",
+		Utc::now().format("%Y-%m-%d")
+	);
 	(
 		[
-			(header::CONTENT_TYPE, "application/json; charset=utf-8".to_string()),
+			(
+				header::CONTENT_TYPE,
+				"application/json; charset=utf-8".to_string(),
+			),
 			(
 				header::CONTENT_DISPOSITION,
 				format!("attachment; filename=\"{filename}\""),

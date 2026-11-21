@@ -2968,7 +2968,12 @@ async fn scim_create_group(
 	let mut dir = state.inner.directory.lock().expect("scim");
 	match dir.create_group(body) {
 		Ok(group) => {
-			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			let _ = state
+				.inner
+				.store
+				.lock()
+				.expect("db")
+				.save_scim_directory(&dir);
 			(StatusCode::CREATED, Json(group)).into_response()
 		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
@@ -3008,7 +3013,12 @@ async fn scim_patch_group(
 	let mut dir = state.inner.directory.lock().expect("scim");
 	match dir.patch_group(&id, &body) {
 		Ok(group) => {
-			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			let _ = state
+				.inner
+				.store
+				.lock()
+				.expect("db")
+				.save_scim_directory(&dir);
 			Json(group).into_response()
 		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
@@ -3026,7 +3036,12 @@ async fn scim_delete_group(
 	let mut dir = state.inner.directory.lock().expect("scim");
 	match dir.delete_group(&id) {
 		Ok(()) => {
-			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			let _ = state
+				.inner
+				.store
+				.lock()
+				.expect("db")
+				.save_scim_directory(&dir);
 			StatusCode::NO_CONTENT.into_response()
 		},
 		Err(error) => (StatusCode::NOT_FOUND, error.to_string()).into_response(),
