@@ -1,0 +1,131 @@
+# Multi-container E2E & Client Demo proxy configuration for Agentgateway + Magpie Portal.
+#
+# - LLM endpoint on :4000 with strict Virtual API Key auth for 3 onboarded agent containers.
+# - Actor, agent ID, and cohort group are derived from verified API key metadata (unforgeable).
+# - Guardrail webhooks authenticate to portal:8088 with x-magpie-webhook-token.
+# - MCP endpoint on :3000 enforces the approved tool allow-list against notes:3001/mcp.
+# - Admin API on 0.0.0.0:15000 lets Magpie Portal's native console bridge inspect live proxy state.
+
+config:
+  adminAddr: 0.0.0.0:15000
+  readinessAddr: 0.0.0.0:15021
+
+llm:
+  port: 4000
+  policies:
+    apiKey:
+      mode: strict
+      keys:
+        - key: magpie-vk-pilot-alice
+          metadata:
+            actor: alice.chen@agency.gov.au
+            agent: claude-code-pilot
+            group: ai-pilot-enforced
+            team: engineering-pilot
+        - key: magpie-vk-trial-bob
+          metadata:
+            actor: bob.smith@agency.gov.au
+            agent: codex-trial
+            group: ai-trial-observe
+            team: policy-trial
+        - key: magpie-vk-ops-carol
+          metadata:
+            actor: carol.jones@agency.gov.au
+            agent: mcp-ops-agent
+            group: ai-ops-enforced
+            team: platform-ops
+  models:
+    - name: au-sovereign-llm
+      provider:
+        custom:
+          formats:
+            - type: completions
+      params:
+        baseUrl: http://mock-llm:8090/v1
+        model: au-sovereign-llm
+      guardrails:
+        request:
+          - webhook:
+              target:
+                host: portal:8088
+              failureMode: failClosed
+              forwardHeaderMatches:
+                - name: x-magpie-marking
+                  value:
+                    regex: ".+"
+              headers:
+                ":path": "'/guardrails/request'"
+                x-magpie-webhook-token: "'e2e-webhook-token-0123456789'"
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'au-sovereign-llm'"
+                x-magpie-model: "'au-sovereign-llm'"
+                x-magpie-actor: "apiKey.actor"
+                x-magpie-agent: "apiKey.agent"
+                x-magpie-groups: "apiKey.group"
+        response:
+          - webhook:
+              target:
+                host: portal:8088
+              failureMode: failClosed
+              headers:
+                ":path": "'/guardrails/response'"
+                x-magpie-webhook-token: "'e2e-webhook-token-0123456789'"
+                x-magpie-region: "'ap-southeast-2'"
+                x-magpie-destination: "'au-sovereign-llm'"
+                x-magpie-model: "'au-sovereign-llm'"
+                x-magpie-actor: "apiKey.actor"
+                x-magpie-agent: "apiKey.agent"
+                x-magpie-groups: "apiKey.group"
+
+    - name: us-foreign-llm
+      provider:
+        custom:
+          formats:
+            - type: completions
+      params:
+        baseUrl: http://mock-llm:8090/v1
+        model: us-foreign-llm
+      guardrails:
+        request:
+          - webhook:
+              target:
+                host: portal:8088
+              failureMode: failClosed
+              forwardHeaderMatches:
+                - name: x-magpie-marking
+                  value:
+                    regex: ".+"
+              headers:
+                ":path": "'/guardrails/request'"
+                x-magpie-webhook-token: "'e2e-webhook-token-0123456789'"
+                x-magpie-region: "'us-east-1'"
+                x-magpie-destination: "'us-foreign-llm'"
+                x-magpie-model: "'us-foreign-llm'"
+                x-magpie-actor: "apiKey.actor"
+                x-magpie-agent: "apiKey.agent"
+                x-magpie-groups: "apiKey.group"
+        response:
+          - webhook:
+              target:
+                host: portal:8088
+              failureMode: failClosed
+              headers:
+                ":path": "'/guardrails/response'"
+                x-magpie-webhook-token: "'e2e-webhook-token-0123456789'"
+                x-magpie-region: "'us-east-1'"
+                x-magpie-destination: "'us-foreign-llm'"
+                x-magpie-model: "'us-foreign-llm'"
+                x-magpie-actor: "apiKey.actor"
+                x-magpie-agent: "apiKey.agent"
+                x-magpie-groups: "apiKey.group"
+
+mcp:
+  port: 3000
+  policies:
+    mcpAuthorization:
+      rules:
+        - "mcp.tool.name in ['example_search']"
+  targets:
+    - name: notes
+      mcp:
+        host: http://notes:3001/mcp

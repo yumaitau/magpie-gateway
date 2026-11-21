@@ -13,6 +13,7 @@ import githubCopilotIcon from '@/assets/providers/copilot.svg';
 import windsurfIcon from '@/assets/windsurf.svg';
 import { claudeSubscriptionWarning } from '@/claudeSubscription';
 import { CatalogModelSelector } from '@/components/CatalogModelSelector';
+import { FleetRolloutPanel } from '@/components/FleetRollout';
 import { FreeformCombobox } from '@/components/FreeformCombobox';
 import { type CatalogSelection, GatewayModelPicker } from '@/components/GatewayModelPicker';
 import {
@@ -28,6 +29,7 @@ import { providerLabel } from '@/config';
 import { hasKeyValue, keyLabel, maskKey } from '@/credentialDisplay';
 import { llmGatewayOrigin } from '@/gatewayUrls';
 import { useConfigDumpMode, useLlmConfigData } from '@/hooks';
+import { isMagpie } from '@/magpie';
 import {
 	isWildcardModelName,
 	modelCatalogProvider,
@@ -378,6 +380,7 @@ export function ClientSetupPage() {
 					</Panel>
 				)}
 			</section>
+			{isMagpie ? <FleetRolloutPanel baseUrl={effectiveBaseUrl} /> : null}
 		</div>
 	);
 }

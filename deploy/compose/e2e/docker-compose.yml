@@ -1,0 +1,196 @@
+# Full multi-container deployment & E2E / Client Demo stack for Magpie Gateway.
+#
+# Network topology (zero-trust segmentation):
+#   magpie-agents   : Onboarded agent containers + Agentgateway proxy ONLY.
+#                     Agents CANNOT bypass the proxy to reach mock-llm, notes, or portal webhooks.
+#   magpie-internal : Portal, Agentgateway proxy, mock-llm, notes MCP backend, mock-siem.
+#
+# Start:
+#   docker compose -f deploy/compose/e2e/docker-compose.yml up -d --build
+# Test:
+#   deploy/compose/e2e/run_e2e.sh
+
+services:
+  portal-init:
+    image: ${MAGPIE_PORTAL_IMAGE:-magpie-gateway-portal:0.1.0}
+    build:
+      context: ../../..
+      dockerfile: deploy/portal.Dockerfile
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown 65532:65532 /data"]
+    volumes:
+      - e2e-portal-data:/data
+    restart: "no"
+
+  portal:
+    image: ${MAGPIE_PORTAL_IMAGE:-magpie-gateway-portal:0.1.0}
+    build:
+      context: ../../..
+      dockerfile: deploy/portal.Dockerfile
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${MAGPIE_PORTAL_PORT:-8088}:8088"
+    environment:
+      MAGPIE_DATABASE_URL: /data/magpie.sqlite
+      MAGPIE_LISTEN: 0.0.0.0:8088
+      MAGPIE_COOKIE_SECURE: "0"
+      MAGPIE_PUBLIC_URL: "http://127.0.0.1:${MAGPIE_PORTAL_PORT:-8088}"
+      MAGPIE_SESSION_SECRET: "${MAGPIE_SESSION_SECRET:-magpie-e2e-session-secret-0123456789abcdef}"
+      MAGPIE_ADMIN_PASSWORD: "${MAGPIE_ADMIN_PASSWORD:-MagpieDemoAdmin2026!}"
+      MAGPIE_WEBHOOK_TOKEN: "${MAGPIE_WEBHOOK_TOKEN:-e2e-webhook-token-0123456789}"
+      MAGPIE_SCIM_TOKEN: "${MAGPIE_SCIM_TOKEN:-e2e-scim-token-0123456789}"
+      MAGPIE_GATEWAY_ADMIN_URL: "http://proxy:15000"
+      MAGPIE_DEMO: "0"
+      MAGPIE_SEED_EXAMPLES: "0"
+      MAGPIE_MOCK_IDP: "0"
+    volumes:
+      - e2e-portal-data:/data
+    tmpfs:
+      - /tmp
+    networks:
+      - magpie-internal
+    depends_on:
+      portal-init:
+        condition: service_completed_successfully
+
+  mock-llm:
+    image: python:3.12-slim
+    command: ["python", "/srv/mock_llm.py"]
+    environment:
+      PORT: "8090"
+    volumes:
+      - ./mock_llm.py:/srv/mock_llm.py:ro
+    ports:
+      - "127.0.0.1:8090:8090"
+    networks:
+      - magpie-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz')"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  notes:
+    image: python:3.12-slim
+    command: ["python", "/srv/notes.py"]
+    environment:
+      CALL_LOG: /log/calls.log
+      PORT: "3001"
+    volumes:
+      - ../notes.py:/srv/notes.py:ro
+      - e2e-notes-log:/log
+    networks:
+      - magpie-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/healthz')"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  mock-siem:
+    image: python:3.12-slim
+    command: ["python", "/srv/mock_siem.py"]
+    environment:
+      PORT: "8095"
+    volumes:
+      - ./mock_siem.py:/srv/mock_siem.py:ro
+    ports:
+      - "127.0.0.1:8095:8095"
+    networks:
+      - magpie-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/healthz')"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  proxy:
+    image: ghcr.io/agentgateway/agentgateway:v1.6.0
+    command: ["-f", "/etc/magpie/agentgateway.yaml"]
+    volumes:
+      - ./agentgateway.yaml:/etc/magpie/agentgateway.yaml:ro
+    ports:
+      - "127.0.0.1:${MAGPIE_MCP_PORT:-3000}:3000"
+      - "127.0.0.1:${MAGPIE_LLM_PORT:-4000}:4000"
+      - "127.0.0.1:${MAGPIE_ADMIN_PORT:-15000}:15000"
+    networks:
+      - magpie-agents
+      - magpie-internal
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+      notes:
+        condition: service_healthy
+      portal:
+        condition: service_started
+
+  # --- Onboarded Agent Containers (isolated on magpie-agents network) ---
+
+  agent-pilot:
+    build:
+      context: ./agent
+    container_name: magpie-agent-pilot
+    environment:
+      AGENT_NAME: "claude-code-pilot"
+      AGENT_ACTOR: "alice.chen@agency.gov.au"
+      AGENT_COHORT: "ai-pilot-enforced"
+      OPENAI_BASE_URL: "http://proxy:4000/v1"
+      OPENAI_API_KEY: "magpie-vk-pilot-alice"
+      MAGPIE_MCP_URL: "http://proxy:3000/mcp"
+      MAGPIE_DEFAULT_MODEL: "au-sovereign-llm"
+    networks:
+      - magpie-agents
+    depends_on:
+      proxy:
+        condition: service_started
+
+  agent-trial:
+    build:
+      context: ./agent
+    container_name: magpie-agent-trial
+    environment:
+      AGENT_NAME: "codex-trial"
+      AGENT_ACTOR: "bob.smith@agency.gov.au"
+      AGENT_COHORT: "ai-trial-observe"
+      OPENAI_BASE_URL: "http://proxy:4000/v1"
+      OPENAI_API_KEY: "magpie-vk-trial-bob"
+      MAGPIE_MCP_URL: "http://proxy:3000/mcp"
+      MAGPIE_DEFAULT_MODEL: "au-sovereign-llm"
+    networks:
+      - magpie-agents
+    depends_on:
+      proxy:
+        condition: service_started
+
+  agent-mcp:
+    build:
+      context: ./agent
+    container_name: magpie-agent-mcp
+    environment:
+      AGENT_NAME: "mcp-ops-agent"
+      AGENT_ACTOR: "carol.jones@agency.gov.au"
+      AGENT_COHORT: "ai-ops-enforced"
+      OPENAI_BASE_URL: "http://proxy:4000/v1"
+      OPENAI_API_KEY: "magpie-vk-ops-carol"
+      MAGPIE_MCP_URL: "http://proxy:3000/mcp"
+      MAGPIE_DEFAULT_MODEL: "au-sovereign-llm"
+    networks:
+      - magpie-agents
+    depends_on:
+      proxy:
+        condition: service_started
+
+networks:
+  magpie-agents:
+    driver: bridge
+  magpie-internal:
+    driver: bridge
+
+volumes:
+  e2e-portal-data:
+  e2e-notes-log:

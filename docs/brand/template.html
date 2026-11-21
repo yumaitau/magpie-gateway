@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<title>$title$</title>
+<link rel="stylesheet" href="style.css">
+$if(running-title)$<style>@page { @top-left { content: "$running-title$"; } @bottom-left { content: "Version $version$ · $date$"; } }</style>$endif$
+</head>
+<body>
+
+<section class="cover">
+  <div class="cover-band"></div>
+  <img class="cover-logo" src="magpie-emblem.png" alt="Magpie Gateway emblem">
+  <p class="cover-kicker">$if(kicker)$$kicker$$else$Enterprise &amp; Government Guide$endif$</p>
+  <h1 class="cover-title">Magpie Gateway</h1>
+  <p class="cover-name">$if(subtitle)$$subtitle$$else$Sovereign AI Governance, Australian Ready$endif$</p>
+  <p class="cover-sub">$if(note)$$note$$else$For Microsoft Entra ID, Intune, Microsoft Sentinel, Azure and Australian Government$endif$</p>
+  <table class="cover-meta">
+    <tr><th>Document</th><td>$title$</td></tr>
+    <tr><th>Version</th><td>$version$</td></tr>
+    <tr><th>Date</th><td>$date$</td></tr>
+    <tr><th>Status</th><td>$status$</td></tr>
+    <tr><th>Platform</th><td>Magpie Gateway (built on Agentgateway)</td></tr>
+  </table>
+</section>
+
+<section class="control">
+$control$
+</section>
+
+<nav class="toc">
+<h2 class="toc-title">Contents</h2>
+$toc$
+</nav>
+
+<main>
+$body$
+</main>
+
+</body>
+</html>

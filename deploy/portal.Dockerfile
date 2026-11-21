@@ -14,6 +14,7 @@ RUN npm install -g pnpm@11.20.0 \
 FROM rust:1.99.0-bookworm AS build
 WORKDIR /src
 COPY crates/cel-fork crates/cel-fork
+COPY detections detections
 COPY magpie magpie
 RUN cargo build --manifest-path magpie/Cargo.toml -p magpie-portal --release --locked
 

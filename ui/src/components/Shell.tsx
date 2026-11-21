@@ -52,6 +52,7 @@ type NavItemConfig = {
 	to: string;
 	label: string;
 	icon: React.ComponentType<{ size?: number }>;
+	badge?: number;
 	placeholder?: boolean;
 	groupStart?: boolean;
 	exact?: boolean;
@@ -126,8 +127,52 @@ export function Shell() {
 		hasBinds,
 		dumpMode
 	});
+	const magpieLinks = magpie.data?.links || [];
+	const hasGovLink = (href: string) => magpieLinks.some(item => item.href === href);
 	const navGroups: ReadonlyArray<{ title: string; items: readonly NavItemConfig[] }> = isMagpie
 		? [
+				{
+					title: 'Operate',
+					items: [
+						...(canReadGateway ? [{ to: '/', label: 'Home', icon: Home }] : []),
+						...(magpie.data?.canViewControlCentre
+							? [{ to: '/control-centre', label: 'Control Centre', icon: SlidersHorizontal }]
+							: []),
+						...(magpie.data?.canViewApprovals
+							? [
+									{
+										to: '/approvals',
+										label: 'Approvals',
+										icon: ShieldCheck,
+										badge: magpie.data?.pendingCount || 0
+									}
+								]
+							: []),
+						...(hasGovLink('/audit')
+							? [{ to: '/governance/audit', label: 'Decision audit', icon: ScrollText }]
+							: []),
+						...(magpie.data?.canViewEvidence
+							? [{ to: '/evidence', label: 'Evidence pack', icon: FileCode2 }]
+							: [])
+					]
+				},
+				{
+					title: 'Protection',
+					items: [
+						...(hasGovLink('/controls')
+							? [{ to: '/governance/controls', label: 'Controls', icon: Shield }]
+							: []),
+						...(hasGovLink('/dlp')
+							? [{ to: '/dlp-tuning', label: 'Tune DLP', icon: ShieldCheck }]
+							: []),
+						...(magpie.data?.canViewSinks
+							? [{ to: '/siem', label: 'SIEM & Sentinel', icon: Server }]
+							: []),
+						...(hasGovLink('/alerts')
+							? [{ to: '/governance/alerts', label: 'Alerts', icon: Bolt }]
+							: [])
+					]
+				},
 				{
 					title: 'Workspace',
 					items: [
@@ -135,29 +180,35 @@ export function Shell() {
 						...(magpie.data?.canUseSubscriptionPools
 							? [{ to: '/llm/subscription-pools', label: 'Subscription pools', icon: Boxes }]
 							: []),
-						{ to: '/help', label: 'Getting started & help', icon: BookOpen },
+						...(magpie.data?.canViewIdentity
+							? [{ to: '/identity', label: 'Identity & Entra', icon: KeyRound }]
+							: []),
 						...(magpie.data?.canManagePeople
 							? [{ to: '/people', label: 'People', icon: UserRound }]
-							: [])
+							: []),
+						...(hasGovLink('/access')
+							? [{ to: '/governance/access', label: 'Roles and groups', icon: ShieldCheck }]
+							: []),
+						{ to: '/help', label: 'Getting started & help', icon: BookOpen }
 					]
 				},
-				...(canReadGateway ? nativeGroups : []),
+				...(canReadGateway ? nativeGroups.filter(group => group.title !== 'Gateway') : []),
 				{
-					title: 'Governance',
-					items: (magpie.data?.links || []).map(item => ({
-						to: item.href === '/dlp' ? '/dlp-tuning' : `/governance${item.href}`,
-						label:
-							item.href === '/dlp'
-								? 'Tune DLP'
-								: item.href === '/access'
-									? 'Roles and groups'
-									: item.href === '/settings'
-										? 'Enforcement and settings'
-										: item.label,
-						icon: ShieldCheck
-					}))
+					title: 'Governance (advanced)',
+					items: magpieLinks
+						.filter(
+							item =>
+								!['/controls', '/dlp', '/alerts', '/audit', '/approvals', '/access'].includes(
+									item.href
+								)
+						)
+						.map(item => ({
+							to: `/governance${item.href}`,
+							label: item.href === '/settings' ? 'Legacy settings form' : item.label,
+							icon: ShieldCheck
+						}))
 				}
-			]
+			].filter(group => group.items.length > 0)
 		: nativeGroups;
 	const currentUser = magpie.data || runtime.data?.user;
 	const nav = navGroups.flatMap(group => group.items);
@@ -255,12 +306,11 @@ export function Shell() {
 						)}
 						{isMagpie &&
 							magpie.data &&
-							(magpie.data.links.some(item => item.href === '/settings') ? (
+							(magpie.data.canViewControlCentre ? (
 								<Link
 									className="magpie-mode"
-									to="/governance/$page"
-									params={{ page: 'settings' }}
-									title="Open settings to enforce one group, or the organisation default. A group can return to trial without changing the others."
+									to="/control-centre"
+									title="Open Control Centre to manage posture presets, cohort enforcement, and kill switches."
 								>
 									{enforcementLabel(magpie.data)}
 								</Link>
@@ -292,6 +342,27 @@ export function Shell() {
 					</div>
 				</header>
 				<main className="content">
+					{isMagpie && (magpie.data?.killGlobal || (magpie.data?.killAgents?.length ?? 0) > 0) && (
+						<StatusBanner
+							state="bad"
+							title={
+								magpie.data?.killGlobal
+									? 'Global kill switch is active'
+									: `Per-agent kill switch active (${magpie.data?.killAgents?.length})`
+							}
+							action={
+								magpie.data?.canViewControlCentre ? (
+									<Link className="button" to="/control-centre">
+										Manage in Control Centre
+									</Link>
+								) : undefined
+							}
+						>
+							{magpie.data?.killGlobal
+								? 'All enforced AI traffic is blocked immediately. Cohorts explicitly set to Trial remain log-only.'
+								: `Blocked agent IDs: ${magpie.data?.killAgents?.join(', ')}.`}
+						</StatusBanner>
+					)}
 					{runtime.data?.configReload && !runtime.data.configReload.synchronized && (
 						<StatusBanner state="warn" title="Configuration reload failed">
 							The last configuration reload was rejected, so the gateway is still running the
@@ -517,20 +588,22 @@ function navigationGroups(options: {
 
 const essentialPaths = new Set([
 	'/',
+	'/control-centre',
+	'/approvals',
+	'/evidence',
+	'/siem',
+	'/identity',
 	'/account',
 	'/llm/subscription-pools',
 	'/help',
 	'/dlp-tuning',
 	'/people',
+	'/governance/access',
 	'/llm/get-started',
 	'/llm/models',
 	'/llm/keys',
 	'/llm/playground',
 	'/llm/client-setup',
-	'/llm/logs',
-	'/settings',
-	'/governance/dashboard',
-	'/governance/approvals',
 	'/governance/audit',
 	'/governance/alerts',
 	'/governance/controls'
@@ -610,6 +683,7 @@ function MobileNavItem(props: {
 	to: string;
 	label: string;
 	icon: React.ComponentType<{ size?: number }>;
+	badge?: number;
 	currentPath: string;
 	placeholder?: boolean;
 	groupStart?: boolean;
@@ -637,6 +711,7 @@ function MobileNavItem(props: {
 		>
 			<Icon size={16} />
 			<span>{props.label}</span>
+			{props.badge && props.badge > 0 ? <span className="nav-badge">{props.badge}</span> : null}
 		</Link>
 	);
 }
@@ -645,6 +720,7 @@ function NavItem(props: {
 	to: string;
 	label: string;
 	icon: React.ComponentType<{ size?: number }>;
+	badge?: number;
 	currentPath: string;
 	placeholder?: boolean;
 	groupStart?: boolean;
@@ -672,6 +748,7 @@ function NavItem(props: {
 		>
 			<Icon size={17} />
 			<span>{props.label}</span>
+			{props.badge && props.badge > 0 ? <span className="nav-badge">{props.badge}</span> : null}
 		</Link>
 	);
 }

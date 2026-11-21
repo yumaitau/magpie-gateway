@@ -183,6 +183,8 @@ impl Store {
 		self.migrate_accounts()?;
 		self.conn.execute_batch(crate::alerts::SCHEMA)?;
 		self.conn.execute_batch(crate::pools::SCHEMA)?;
+		self.conn.execute_batch(crate::scim::SCHEMA)?;
+		self.conn.execute_batch(crate::sinks::SCHEMA)?;
 		Ok(())
 	}
 
@@ -624,6 +626,105 @@ impl Store {
 			documents.push(read_document(row)?);
 		}
 		Ok(documents)
+	}
+
+	pub fn scim_token_override(&self) -> Result<Option<String>> {
+		let mut statement = self
+			.conn
+			.prepare("SELECT value FROM runtime_settings WHERE name = 'scim_token'")?;
+		let mut rows = statement.query([])?;
+		match rows.next()? {
+			Some(row) => {
+				let value: String = row.get(0)?;
+				if value.is_empty() {
+					Ok(None)
+				} else {
+					Ok(Some(value))
+				}
+			},
+			None => Ok(None),
+		}
+	}
+
+	pub fn set_scim_token_override(&self, token: &str, actor: &str) -> Result<()> {
+		let tx = self.conn.unchecked_transaction()?;
+		self.conn.execute(
+			"INSERT INTO runtime_settings (name, value) VALUES ('scim_token', ?1)
+			 ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+			params![token],
+		)?;
+		self.append_audit(&AuditEvent::new(
+			"access",
+			actor,
+			"",
+			"",
+			"",
+			"allow",
+			"SCIM provisioning bearer token rotated.",
+			serde_json::json!({"rotated": true}),
+		))?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	pub fn monthly_stats(
+		&self,
+		from: Option<DateTime<Utc>>,
+		to: Option<DateTime<Utc>>,
+	) -> Result<crate::evidence::MonthlyStats> {
+		let mut statement = self.conn.prepare(
+			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry
+			 FROM audit_events ORDER BY at ASC",
+		)?;
+		let mut rows = statement.query([])?;
+		let mut stats = crate::evidence::MonthlyStats::default();
+		while let Some(row) = rows.next()? {
+			let event = read_audit(row)?;
+			if let Some(start) = from
+				&& event.at < start
+			{
+				continue;
+			}
+			if let Some(end) = to
+				&& event.at > end
+			{
+				continue;
+			}
+			match event.kind.as_str() {
+				"decision" | "llm" | "mcp" | "pool" => {
+					stats.requests += 1;
+					if matches!(event.decision.as_str(), "block" | "deny" | "reject") {
+						stats.blocks += 1;
+					}
+					if let Some(hits) = event.detail.get("hits").and_then(|v| v.as_array()) {
+						stats.dlp_hits += hits.len() as u64;
+					}
+					let lower = event.reason.to_ascii_lowercase();
+					if lower.contains("sovereign")
+						|| lower.contains("australian")
+						|| lower.contains("protected")
+						|| lower.contains("secret")
+					{
+						stats.sovereign_denies += 1;
+					}
+				},
+				"policy" | "settings" | "access" | "alerts" | "sinks" => {
+					stats.policy_changes += 1;
+				},
+				"approval" => {
+					stats.approvals += 1;
+				},
+				"auth" => {
+					stats.logins += 1;
+				},
+				_ => {
+					if event.reason.to_ascii_lowercase().contains("login") {
+						stats.logins += 1;
+					}
+				},
+			}
+		}
+		Ok(stats)
 	}
 }
 

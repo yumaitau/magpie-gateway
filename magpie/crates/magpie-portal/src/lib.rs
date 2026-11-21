@@ -6,12 +6,15 @@ mod access;
 mod accounts;
 pub mod alerts;
 mod australia;
+mod control_centre;
 mod controls;
+mod enterprise;
 mod ingest;
 pub mod model_catalog;
 mod native;
 pub mod otlp;
 mod pools;
+pub mod siem;
 mod tuning;
 mod ui;
 
@@ -179,6 +182,7 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 	}
 	accounts::bootstrap(&store, &config)?;
 	let model_catalog = model_catalog::Catalog::load(&store)?;
+	let directory = store.load_scim_directory().unwrap_or_default();
 	let login_dummy_hash = identity::hash_password(&identity::start_pkce().verifier)?;
 	let codec = SessionCodec::new(config.session_secret.clone(), config.idle, config.absolute);
 	Ok(AppState {
@@ -196,7 +200,7 @@ pub fn state(config: Config) -> magpie::Result<AppState> {
 			pending: Mutex::new(HashMap::new()),
 			codes: Mutex::new(HashMap::new()),
 			provider: Mutex::new(None),
-			directory: Mutex::new(Directory::default()),
+			directory: Mutex::new(directory),
 			limiter: RateLimiter::new(vec![
 				ToolLimit {
 					tool: "example_search".into(),
@@ -244,6 +248,9 @@ pub fn router(state: AppState) -> Router {
 		.merge(accounts::routes())
 		.merge(pools::routes())
 		.merge(ingest::routes())
+		.merge(control_centre::routes())
+		.merge(enterprise::routes())
+		.merge(siem::routes())
 		.route(
 			"/api/magpie/model-catalog",
 			get(model_catalog::get).post(model_catalog::sync),
@@ -2783,11 +2790,18 @@ fn scim_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 		.get(header::AUTHORIZATION)
 		.and_then(|value| value.to_str().ok())
 		.and_then(|value| value.strip_prefix("Bearer "));
-	if state.inner.config.scim_token.is_empty()
-		|| !identity::constant_time_eq(
-			presented.unwrap_or("").as_bytes(),
-			state.inner.config.scim_token.as_bytes(),
-		) {
+	let active_token = state
+		.inner
+		.store
+		.lock()
+		.expect("db")
+		.scim_token_override()
+		.ok()
+		.flatten()
+		.unwrap_or_else(|| state.inner.config.scim_token.clone());
+	if active_token.is_empty()
+		|| !identity::constant_time_eq(presented.unwrap_or("").as_bytes(), active_token.as_bytes())
+	{
 		return Err((StatusCode::UNAUTHORIZED, "SCIM bearer token required").into_response());
 	}
 	Ok(())
@@ -2851,14 +2865,14 @@ async fn scim_create_user(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state
-		.inner
-		.directory
-		.lock()
-		.expect("scim")
-		.create_user(body)
-	{
-		Ok(user) => (StatusCode::CREATED, Json(user)).into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	match dir.create_user(body) {
+		Ok(user) => {
+			let store = state.inner.store.lock().expect("db");
+			let _ = store.save_scim_directory(&dir);
+			let _ = store.sync_scim_user_lifecycle(&user, false);
+			(StatusCode::CREATED, Json(user)).into_response()
+		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
 	}
 }
@@ -2893,14 +2907,14 @@ async fn scim_patch_user(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state
-		.inner
-		.directory
-		.lock()
-		.expect("scim")
-		.patch_user(&id, &body)
-	{
-		Ok(user) => Json(user).into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	match dir.patch_user(&id, &body) {
+		Ok(user) => {
+			let store = state.inner.store.lock().expect("db");
+			let _ = store.save_scim_directory(&dir);
+			let _ = store.sync_scim_user_lifecycle(&user, false);
+			Json(user).into_response()
+		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
 	}
 }
@@ -2913,8 +2927,17 @@ async fn scim_delete_user(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state.inner.directory.lock().expect("scim").delete_user(&id) {
-		Ok(()) => StatusCode::NO_CONTENT.into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	let existing = dir.get_user(&id).cloned();
+	match dir.delete_user(&id) {
+		Ok(()) => {
+			let store = state.inner.store.lock().expect("db");
+			let _ = store.save_scim_directory(&dir);
+			if let Some(user) = existing {
+				let _ = store.sync_scim_user_lifecycle(&user, true);
+			}
+			StatusCode::NO_CONTENT.into_response()
+		},
 		Err(error) => (StatusCode::NOT_FOUND, error.to_string()).into_response(),
 	}
 }
@@ -2942,14 +2965,12 @@ async fn scim_create_group(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state
-		.inner
-		.directory
-		.lock()
-		.expect("scim")
-		.create_group(body)
-	{
-		Ok(group) => (StatusCode::CREATED, Json(group)).into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	match dir.create_group(body) {
+		Ok(group) => {
+			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			(StatusCode::CREATED, Json(group)).into_response()
+		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
 	}
 }
@@ -2984,14 +3005,12 @@ async fn scim_patch_group(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state
-		.inner
-		.directory
-		.lock()
-		.expect("scim")
-		.patch_group(&id, &body)
-	{
-		Ok(group) => Json(group).into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	match dir.patch_group(&id, &body) {
+		Ok(group) => {
+			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			Json(group).into_response()
+		},
 		Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
 	}
 }
@@ -3004,14 +3023,12 @@ async fn scim_delete_group(
 	if let Err(response) = scim_auth(&state, &headers) {
 		return response;
 	}
-	match state
-		.inner
-		.directory
-		.lock()
-		.expect("scim")
-		.delete_group(&id)
-	{
-		Ok(()) => StatusCode::NO_CONTENT.into_response(),
+	let mut dir = state.inner.directory.lock().expect("scim");
+	match dir.delete_group(&id) {
+		Ok(()) => {
+			let _ = state.inner.store.lock().expect("db").save_scim_directory(&dir);
+			StatusCode::NO_CONTENT.into_response()
+		},
 		Err(error) => (StatusCode::NOT_FOUND, error.to_string()).into_response(),
 	}
 }

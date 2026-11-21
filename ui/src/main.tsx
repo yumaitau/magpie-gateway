@@ -12,15 +12,19 @@ import { createRoot } from 'react-dom/client';
 import { routerBasePath } from '@/basePath';
 import { Shell } from '@/components/Shell';
 import { isMagpie } from '@/magpie';
+import { ApprovalsInboxPage } from '@/pages/ApprovalsInbox';
 import { CelPage } from '@/pages/Cel';
 import { ClientSetupPage } from '@/pages/ClientSetup';
+import { ControlCentrePage } from '@/pages/ControlCentre';
 import { CostsPage } from '@/pages/Costs';
 import { DlpTuningPage } from '@/pages/DlpTuning';
 import { DumpPoliciesPage } from '@/pages/DumpPolicies';
+import { EvidencePackPage } from '@/pages/EvidencePack';
 import { LlmGetStartedPage, McpGetStartedPage, TrafficGetStartedPage } from '@/pages/GetStarted';
 import { GuardrailsPage } from '@/pages/Guardrails';
 import { HelpPage } from '@/pages/Help';
 import { HomePage } from '@/pages/Home';
+import { IdentityEntraPage } from '@/pages/IdentityEntra';
 import { KeysPage } from '@/pages/Keys';
 import { LoginPage } from '@/pages/Login';
 import { AnalyticsPage, LogsPage } from '@/pages/Logs';
@@ -37,6 +41,7 @@ import { ModelsPage } from '@/pages/Models';
 import { PlaygroundPage } from '@/pages/Playground';
 import { McpPoliciesPage, PoliciesPage } from '@/pages/Policies';
 import { ProvidersPage } from '@/pages/Providers';
+import { SiemSinksPage } from '@/pages/SiemSinks';
 import { SubscriptionPoolsPage } from '@/pages/SubscriptionPools';
 import { ObservabilitySettingsPage } from '@/pages/settings/ObservabilitySettings';
 import { SettingsLayout, settingsTabs } from '@/pages/settings/Settings';
@@ -96,6 +101,31 @@ const dlpTuningRoute = createRoute({
 	getParentRoute: () => appRoute,
 	path: '/dlp-tuning',
 	component: DlpTuningPage
+});
+const controlCentreRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/control-centre',
+	component: ControlCentrePage
+});
+const approvalsInboxRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/approvals',
+	component: ApprovalsInboxPage
+});
+const identityEntraRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/identity',
+	component: IdentityEntraPage
+});
+const siemSinksRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/siem',
+	component: SiemSinksPage
+});
+const evidencePackRoute = createRoute({
+	getParentRoute: () => appRoute,
+	path: '/evidence',
+	component: EvidencePackPage
 });
 
 const magpieAccountRoute = createRoute({
@@ -318,6 +348,11 @@ const router = createRouter({
 			magpieAccountRoute,
 			helpRoute,
 			helpTopicRoute,
+			controlCentreRoute,
+			approvalsInboxRoute,
+			identityEntraRoute,
+			siemSinksRoute,
+			evidencePackRoute,
 			dlpTuningRoute,
 			magpiePeopleRoute,
 			magpieGovernanceRoute,

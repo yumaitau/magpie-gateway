@@ -127,6 +127,7 @@ async fn main() {
 	magpie_portal::alerts::start(state.clone());
 	magpie_portal::model_catalog::start(state.clone());
 	magpie_portal::otlp::start(state.clone());
+	magpie_portal::siem::start(state.clone());
 	let app = magpie_portal::router(state);
 	let listener = tokio::net::TcpListener::bind(&listen).await.expect("bind");
 	println!(

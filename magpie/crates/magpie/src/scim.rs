@@ -4,9 +4,29 @@
 //! and count, and patch operations Entra and Okta use for `active`,
 //! `displayName` and group `members`. This is not a full RFC 7644 implementation.
 
+use chrono::Utc;
+use rusqlite::params;
 use serde_json::{Value, json};
 
+use crate::audit::AuditEvent;
+use crate::store::Store;
 use crate::{Error, Result};
+
+pub const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS scim_users (
+  id TEXT PRIMARY KEY,
+  user_name TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  body TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scim_groups (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"#;
 
 #[derive(Debug, Clone, Default)]
 pub struct Directory {
@@ -230,6 +250,108 @@ pub fn service_provider_config() -> Value {
 			"description": "Bearer token configured on the portal."
 		}]
 	})
+}
+
+impl Store {
+	pub fn load_scim_directory(&self) -> Result<Directory> {
+		let mut users_stmt = self
+			.conn
+			.prepare("SELECT body FROM scim_users ORDER BY user_name")?;
+		let users: Vec<Value> = users_stmt
+			.query_map([], |row| row.get::<_, String>(0))?
+			.filter_map(|r| r.ok())
+			.filter_map(|s| serde_json::from_str(&s).ok())
+			.collect();
+		let mut groups_stmt = self
+			.conn
+			.prepare("SELECT body FROM scim_groups ORDER BY display_name")?;
+		let groups: Vec<Value> = groups_stmt
+			.query_map([], |row| row.get::<_, String>(0))?
+			.filter_map(|r| r.ok())
+			.filter_map(|s| serde_json::from_str(&s).ok())
+			.collect();
+		Ok(Directory { users, groups })
+	}
+
+	pub fn save_scim_directory(&self, directory: &Directory) -> Result<()> {
+		let tx = self.conn.unchecked_transaction()?;
+		let now = Utc::now().to_rfc3339();
+		self.conn.execute("DELETE FROM scim_users", [])?;
+		for user in &directory.users {
+			let id = user.get("id").and_then(Value::as_str).unwrap_or("");
+			let user_name = user.get("userName").and_then(Value::as_str).unwrap_or("");
+			let active = user.get("active").and_then(Value::as_bool).unwrap_or(true);
+			if id.is_empty() || user_name.is_empty() {
+				continue;
+			}
+			self.conn.execute(
+				"INSERT INTO scim_users (id, user_name, active, body, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+				params![id, user_name, active as i64, user.to_string(), now],
+			)?;
+		}
+		self.conn.execute("DELETE FROM scim_groups", [])?;
+		for group in &directory.groups {
+			let id = group.get("id").and_then(Value::as_str).unwrap_or("");
+			let display = group
+				.get("displayName")
+				.and_then(Value::as_str)
+				.unwrap_or("");
+			if id.is_empty() || display.is_empty() {
+				continue;
+			}
+			self.conn.execute(
+				"INSERT INTO scim_groups (id, display_name, body, updated_at) VALUES (?1, ?2, ?3, ?4)",
+				params![id, display, group.to_string(), now],
+			)?;
+		}
+		tx.commit()?;
+		Ok(())
+	}
+
+	/// Propagate SCIM user deactivation/deletion immediately to portal_users and active sessions.
+	pub fn sync_scim_user_lifecycle(&self, scim_user: &Value, deleted: bool) -> Result<usize> {
+		let user_name = scim_user
+			.get("userName")
+			.and_then(Value::as_str)
+			.unwrap_or("")
+			.trim();
+		let external_id = scim_user
+			.get("externalId")
+			.and_then(Value::as_str)
+			.unwrap_or("")
+			.trim();
+		let active = !deleted && scim_user.get("active").and_then(Value::as_bool).unwrap_or(true);
+		let mut affected = 0usize;
+		let portal_users = self.portal_users()?;
+		for user in portal_users {
+			let matches_email = !user_name.is_empty() && user.email.eq_ignore_ascii_case(user_name);
+			let matches_sub = !external_id.is_empty() && user.subject == external_id;
+			if !matches_email && !matches_sub {
+				continue;
+			}
+			let should_disable = !active;
+			if user.disabled != should_disable {
+				self.set_user_disabled(&user.subject, should_disable, "scim-provisioning")?;
+				affected += 1;
+			} else if should_disable {
+				let revoked = self.delete_sessions_for_subject(&user.subject)?;
+				if revoked > 0 {
+					let _ = self.append_audit(&AuditEvent::new(
+						"access",
+						"scim-provisioning",
+						"",
+						"",
+						"",
+						"allow",
+						"SCIM revoked active sessions for disabled user.",
+						json!({"subject": user.subject, "revokedSessions": revoked}),
+					));
+					affected += 1;
+				}
+			}
+		}
+		Ok(affected)
+	}
 }
 
 #[cfg(test)]

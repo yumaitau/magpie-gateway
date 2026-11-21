@@ -61,7 +61,49 @@ fn webhook_body(d: &Destination, job: &Delivery) -> Value {
 			json!({"text":text,"blocks":[{"type":"section","text":{"type":"plain_text","text":text}}]})
 		},
 		"teams" => {
-			json!({"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","contentUrl":null,"content":{"$schema":"http://adaptivecards.io/schemas/adaptive-card.json","type":"AdaptiveCard","version":"1.2","body":[{"type":"TextBlock","text":text,"wrap":true}]}}]})
+			let event_id = job.body["id"].as_str().unwrap_or("test");
+			let at = job.body["at"].as_str().unwrap_or("");
+			let kind = job.body["kind"].as_str().unwrap_or("test");
+			let decision = job.body["decision"].as_str().unwrap_or("test");
+			let would = job.body["wouldAction"].as_str().unwrap_or("none");
+			json!({
+				"type": "message",
+				"attachments": [{
+					"contentType": "application/vnd.microsoft.card.adaptive",
+					"contentUrl": null,
+					"content": {
+						"$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+						"type": "AdaptiveCard",
+						"version": "1.4",
+						"body": [
+							{
+								"type": "TextBlock",
+								"text": "Magpie Gateway Security Alert",
+								"weight": "Bolder",
+								"size": "Medium",
+								"color": if matches!(decision, "block" | "deny" | "reject") { "Attention" } else { "Warning" }
+							},
+							{
+								"type": "FactSet",
+								"facts": [
+									{ "title": "Event ID", "value": event_id },
+									{ "title": "Timestamp", "value": at },
+									{ "title": "Category", "value": kind },
+									{ "title": "Decision", "value": decision },
+									{ "title": "Would-be action", "value": would }
+								]
+							},
+							{
+								"type": "TextBlock",
+								"text": "Raw prompt content is excluded from alert notifications. Open Magpie Decision Audit for full context.",
+								"isSubtle": true,
+								"wrap": true,
+								"size": "Small"
+							}
+						]
+					}
+				}]
+			})
 		},
 		_ => json!({"source":"magpie-gateway","deliveryId":job.id,"event":job.body}),
 	}

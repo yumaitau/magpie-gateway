@@ -2940,3 +2940,416 @@ async fn guardrail_for(client: &Client, base: &str, actor: &str) -> serde_json::
 	assert_eq!(response.status(), StatusCode::OK);
 	response.json().await.expect("body")
 }
+
+
+#[tokio::test]
+async fn control_centre_presets_cohorts_kill_switch_and_approvals_inbox() {
+	let base = spawn(false).await;
+	let (sam, _) = client(&base);
+	let (alex, _) = client(&base);
+	login(&sam, &base, "sam").await;
+	login(&alex, &base, "alex").await;
+
+	// 1. Control Centre overview exposes presets, mode, cohorts and permissions.
+	let overview: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/control-centre"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(overview["mode"], "enforce");
+	assert_eq!(overview["sovereignMode"], true);
+	assert_eq!(overview["presets"].as_array().unwrap().len(), 4);
+	assert_eq!(overview["permissions"]["canChangeEnforcement"], true);
+
+	// 2. Policy editor (alex) cannot apply a preset requiring enforcement/settings permissions.
+	let denied = alex
+		.post(format!("{base}/api/magpie/control-centre/preset"))
+		.json(&json!({ "presetId": "enterprise-standard" }))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+	// 3. Admin (sam) applies Enterprise Standard preset: settings + DLP rules are staged for second-person approval.
+	let applied = sam
+		.post(format!("{base}/api/magpie/control-centre/preset"))
+		.json(&json!({ "presetId": "enterprise-standard" }))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(applied.status(), StatusCode::OK);
+	let applied_body: serde_json::Value = applied.json().await.unwrap();
+	assert!(
+		!applied_body["pendingApproval"]
+			.as_array()
+			.unwrap()
+			.is_empty(),
+		"{applied_body}"
+	);
+
+	// 4. Approvals inbox shows the pending revisions; sam cannot self-approve, alex can approve or reject.
+	let sam_inbox: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/approvals"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let revisions = sam_inbox["revisions"].as_array().unwrap();
+	assert!(!revisions.is_empty());
+	let settings_rev_id = revisions
+		.iter()
+		.find(|r| r["kind"] == "settings")
+		.expect("settings revision")["id"]
+		.as_str()
+		.unwrap()
+		.to_string();
+	let dlp_rev_id = revisions
+		.iter()
+		.find(|r| r["kind"] == "dlp_rule")
+		.expect("dlp revision")["id"]
+		.as_str()
+		.unwrap()
+		.to_string();
+
+	let self_approve = sam
+		.post(format!(
+			"{base}/api/magpie/approvals/revisions/{settings_rev_id}/decide"
+		))
+		.json(&json!({ "decision": "approve" }))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(self_approve.status(), StatusCode::FORBIDDEN);
+
+	// Alex approves the settings revision -> sovereignMode becomes false.
+	let alex_approve = alex
+		.post(format!(
+			"{base}/api/magpie/approvals/revisions/{settings_rev_id}/decide"
+		))
+		.json(&json!({ "decision": "approve" }))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(alex_approve.status(), StatusCode::OK);
+
+	// Alex rejects one DLP revision -> marked rejected cleanly.
+	let alex_reject = alex
+		.post(format!(
+			"{base}/api/magpie/approvals/revisions/{dlp_rev_id}/decide"
+		))
+		.json(&json!({ "decision": "reject" }))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(alex_reject.status(), StatusCode::OK);
+
+	let after_approve: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/control-centre"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(after_approve["sovereignMode"], false);
+
+	// 5. Organisation mode & cohort toggle work via Control Centre JSON endpoints.
+	assert_eq!(
+		sam
+			.post(format!("{base}/api/magpie/control-centre/mode"))
+			.json(&json!({ "mode": "log-only" }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	assert_eq!(
+		sam
+			.post(format!("{base}/api/magpie/control-centre/cohorts/admin"))
+			.json(&json!({ "enforcement": "enforce", "trafficNames": ["pilot-key"] }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	// pilot-key is in the enforcing cohort; an unmatched actor follows the log-only org default.
+	let enforced_hit = guardrail_for(&sam, &base, "pilot-key").await;
+	assert_eq!(enforced_hit["action"]["status_code"], 400, "{enforced_hit}");
+	let trial_hit = guardrail_for(&sam, &base, "unmatched-actor").await;
+	assert!(
+		trial_hit["action"].get("status_code").is_none(),
+		"{trial_hit}"
+	);
+
+	// 6. Kill switch activates immediately and surfaces in /api/magpie/session.
+	assert_eq!(
+		sam
+			.post(format!("{base}/api/magpie/control-centre/kill-switch"))
+			.json(&json!({ "global": true, "agents": ["rogue-agent"] }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	let session: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/session"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(session["killGlobal"], true);
+	assert_eq!(session["killAgents"], json!(["rogue-agent"]));
+	assert_eq!(session["canViewControlCentre"], true);
+	assert_eq!(session["canViewApprovals"], true);
+
+	// Clear kill switch.
+	assert_eq!(
+		sam
+			.post(format!("{base}/api/magpie/control-centre/kill-switch"))
+			.json(&json!({ "global": false, "agents": [] }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+
+	// 7. Submit and decide a model approval through the Approvals Inbox API.
+	let queued: serde_json::Value = alex
+		.post(format!("{base}/api/magpie/approvals"))
+		.json(&json!({
+			"name": "azure-openai/gpt-5-au",
+			"kind": "model",
+			"businessOwner": "Alex Nguyen",
+			"purpose": "Approved enterprise coding assistant",
+			"classification": "OFFICIAL: Sensitive",
+			"expiresOn": "2027-06-30"
+		}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let item_id = queued["id"].as_str().unwrap();
+
+	// Alex cannot self-approve.
+	assert_eq!(
+		alex
+			.post(format!(
+				"{base}/api/magpie/approvals/items/{item_id}/decide"
+			))
+			.json(&json!({ "decision": "approve" }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::FORBIDDEN
+	);
+	// Sam approves it.
+	assert_eq!(
+		sam
+			.post(format!(
+				"{base}/api/magpie/approvals/items/{item_id}/decide"
+			))
+			.json(&json!({ "decision": "approve" }))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+}
+
+
+#[tokio::test]
+async fn enterprise_scim_sync_sentinel_sinks_and_live_evidence_pack() {
+	let base = spawn(false).await;
+	let (sam, _) = client(&base);
+	let (alex, _) = client(&base);
+	login(&sam, &base, "sam").await;
+	login(&alex, &base, "alex").await;
+
+	// 1. Rotate SCIM bearer token via Identity API -> old env token stops working, new token works.
+	let rotated: serde_json::Value = sam
+		.post(format!("{base}/api/magpie/identity/scim-token"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let new_token = rotated["token"].as_str().unwrap().to_string();
+	assert!(new_token.starts_with("mp_scim_"));
+
+	assert_eq!(
+		sam
+			.get(format!("{base}/scim/v2/ServiceProviderConfig"))
+			.bearer_auth("example-token")
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+
+	// 2. Provision alex via SCIM and create a synced Entra group.
+	let scim_user: serde_json::Value = sam
+		.post(format!("{base}/scim/v2/Users"))
+		.bearer_auth(&new_token)
+		.json(&json!({
+			"userName": "alex.nguyen@example.gov.au",
+			"displayName": "Alex Nguyen",
+			"externalId": "example-user",
+			"active": true
+		}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let scim_user_id = scim_user["id"].as_str().unwrap().to_string();
+
+	let scim_group: serde_json::Value = sam
+		.post(format!("{base}/scim/v2/Groups"))
+		.bearer_auth(&new_token)
+		.json(&json!({
+			"displayName": "Entra AI Pilot Team",
+			"externalId": "00000000-1111-2222-3333-444444444444"
+		}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	let scim_group_id = scim_group["id"].as_str().unwrap().to_string();
+
+	// Map the synced Entra SCIM group directly to an enforcing Viewer cohort.
+	let mapped: serde_json::Value = sam
+		.post(format!("{base}/api/magpie/identity/map-scim-group"))
+		.json(&json!({
+			"scimGroupId": scim_group_id,
+			"roleId": "viewer",
+			"enforcement": "enforce"
+		}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(mapped["name"], "Entra AI Pilot Team");
+
+	// Deactivate alex via SCIM -> alex's existing portal session is immediately revoked!
+	assert_eq!(
+		sam
+			.patch(format!("{base}/scim/v2/Users/{scim_user_id}"))
+			.bearer_auth(&new_token)
+			.json(&json!({
+				"Operations": [{ "op": "replace", "path": "active", "value": false }]
+			}))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::OK
+	);
+	assert_eq!(
+		alex
+			.get(format!("{base}/api/magpie/session"))
+			.send()
+			.await
+			.unwrap()
+			.status(),
+		StatusCode::UNAUTHORIZED
+	);
+
+	// 3. Configure a Microsoft Sentinel SIEM sink; secret is accepted on write and never echoed back.
+	let saved_sink: serde_json::Value = sam
+		.post(format!("{base}/api/magpie/sinks"))
+		.json(&json!({
+			"name": "Agency Sentinel",
+			"kind": "sentinel",
+			"enabled": false,
+			"endpoint": "https://dce-magpie-au.australiaeast-1.ingest.monitor.azure.com",
+			"dcrImmutableId": "dcr-1111222233334444",
+			"streamName": "Custom-MagpieAudit_CL",
+			"authMode": "client-credentials",
+			"tenantId": "11111111-2222-3333-4444-555555555555",
+			"clientId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			"secret": "super-secret-client-credential"
+		}))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(saved_sink["hasSecret"], true);
+	assert!(!saved_sink.to_string().contains("super-secret-client-credential"));
+
+	// Sentinel DCR + KQL analytics pack downloads cleanly with all 6 detection rules.
+	let pack: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/sinks/sentinel-pack"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(pack["tableName"], "MagpieAudit_CL");
+	assert_eq!(pack["kqlAnalyticsRules"].as_array().unwrap().len(), 6);
+
+	// 4. Generate a decision event, then verify Live Evidence Pack reflects real non-zero counts.
+	let _ = guardrail_for(&sam, &base, "pilot-auditor").await;
+	let evidence: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/evidence"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert!(evidence["stats"]["requests"].as_u64().unwrap() >= 1);
+	assert!(evidence["stats"]["policyChanges"].as_u64().unwrap() >= 1);
+	assert!(!evidence["rows"].as_array().unwrap().is_empty());
+
+	let csv_resp = sam
+		.get(format!("{base}/api/magpie/evidence.csv"))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(csv_resp.status(), StatusCode::OK);
+	assert!(csv_resp.text().await.unwrap().contains("ISM-2159"));
+
+	let pdf_resp = sam
+		.get(format!("{base}/api/magpie/evidence.pdf"))
+		.send()
+		.await
+		.unwrap();
+	assert_eq!(pdf_resp.status(), StatusCode::OK);
+	assert!(pdf_resp.bytes().await.unwrap().starts_with(b"%PDF-1.4"));
+
+	let bundle: serde_json::Value = sam
+		.get(format!("{base}/api/magpie/evidence-pack.json"))
+		.send()
+		.await
+		.unwrap()
+		.json()
+		.await
+		.unwrap();
+	assert_eq!(bundle["sha256"].as_str().unwrap().len(), 64);
+	assert_eq!(bundle["pack"]["schema"], "magpie.assurance-pack.v1");
+}

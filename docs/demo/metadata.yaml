@@ -1,0 +1,38 @@
+title: "Magpie Gateway: Client Demo Playbook for Josh"
+running-title: "Magpie Gateway — Client Demo Playbook"
+kicker: "Live Client Demo Guide"
+subtitle: "Step-by-Step Presenter Script, Architecture Walkthrough & Containerised Sandbox"
+note: "Prepared for live enterprise Microsoft and Australian Government client demonstrations"
+version: "2.0"
+date: "21-11-2026"
+status: "Presenter Ready"
+lang: en-AU
+toc-title: Contents
+control: |
+  ## Document control
+
+  | Item | Value |
+  |---|---|
+  | Document | Magpie Gateway — Client Demo Playbook |
+  | Presenter | Josh (Enterprise & Australian Government Client Demos) |
+  | Version | 2.0 |
+  | Date | 21-11-2026 |
+  | Demo Duration | 30 minutes (Core) or 45 minutes (Full Technical Deep-Dive) |
+  | Sandbox Stack | `deploy/compose/e2e/docker-compose.yml` (8 containers: Portal, Proxy, 3 Onboarded Agents, Mock LLM, Notes MCP, Mock SIEM) |
+  | Architecture Diagram | `docs/diagrams/magpie-aws-architecture.svg` / `.png` (Official AWS Architecture Icons) |
+  | Rebuild Command | `python3 tools/docs/build-demo-guide.py` |
+
+  ## Demo Agenda at a Glance
+
+  | Act | Segment | Time | Key Client Takeaway |
+  |---|---|---|---|
+  | Setup | Preflight & Reset | 5 min (before call) | 8 containers live, clean terminal + browser split |
+  | Arch | AWS Sovereign Solution Architecture | 4 min | Zero-trust EKS + Bedrock AU + Entra ID + Sentinel |
+  | Act 1 | Control Centre & Posture Presets | 5 min | Plain-English controls, diff preview, no YAML chaos |
+  | Act 2 | Staged Cohort Rollout & AU DLP | 7 min | Enforced pilot blocked on TFN/ABN; trial team uninterrupted |
+  | Act 3 | Sovereignty, PSPF & Response Scrubbing | 5 min | Foreign regions blocked; upstream TFN leaks scrubbed |
+  | Act 4 | Four-Eyes Approvals & MCP Tool Control | 5 min | Separation of duties + unapproved MCP tools blocked |
+  | Act 5 | Instant Per-Agent & Global Kill Switches | 3 min | Surgical containment in one click + instant recovery |
+  | Act 6 | Entra SCIM, Intune, Sentinel & Evidence Pack | 6 min | Live SIEM stream + SHA-256 auditor evidence pack |
+
+  All sample ABN, TFN, user identities (`alice.chen@agency.gov.au`, `bob.smith@agency.gov.au`, `carol.jones@agency.gov.au`), and virtual API keys in this guide are synthetic demo data. Compliance framework references follow Magpie Gateway's honest framing (clearly distinguishing direct vs interpretive controls).

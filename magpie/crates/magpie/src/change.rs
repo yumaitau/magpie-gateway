@@ -105,6 +105,20 @@ pub fn approve(revision: &mut Revision, approver: &str) -> crate::Result<()> {
 	Ok(())
 }
 
+pub fn reject(revision: &mut Revision, reviewer: &str) -> crate::Result<()> {
+	if revision.status != RevisionStatus::Pending {
+		return Err(crate::Error::Msg(
+			"Only a pending revision can be rejected.".into(),
+		));
+	}
+	if reviewer.trim().is_empty() {
+		return Err(crate::Error::Msg("A reviewer is required.".into()));
+	}
+	revision.status = RevisionStatus::Rejected;
+	revision.approver = Some(reviewer.to_string());
+	Ok(())
+}
+
 pub fn rollback_of(latest_active: &Revision, actor: &str, now: DateTime<Utc>) -> Revision {
 	Revision {
 		id: crate::new_id(),
@@ -137,5 +151,23 @@ mod tests {
 		assert!(diff.iter().any(|line| line.contains("block")));
 		let rolled = rollback_of(&revision, "sam", Utc::now());
 		assert_eq!(rolled.after, json!({"action": "log"}));
+	}
+
+	#[test]
+	fn reject_marks_pending_revision_rejected() {
+		let mut revision = propose(
+			"dlp",
+			"rule-2",
+			"alex",
+			json!({"action": "log"}),
+			json!({"action": "block"}),
+			true,
+			Utc::now(),
+		);
+		assert!(reject(&mut revision, " ").is_err());
+		reject(&mut revision, "sam").unwrap();
+		assert_eq!(revision.status, RevisionStatus::Rejected);
+		assert_eq!(revision.approver.as_deref(), Some("sam"));
+		assert!(reject(&mut revision, "sam").is_err());
 	}
 }

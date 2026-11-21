@@ -8,8 +8,17 @@ export type MagpieSession = {
 	canReadGateway: boolean;
 	canManagePeople: boolean;
 	canUseSubscriptionPools?: boolean;
+	canViewControlCentre?: boolean;
+	canViewApprovals?: boolean;
+	canViewIdentity?: boolean;
+	canViewEvidence?: boolean;
+	canViewSinks?: boolean;
 	canChangeEnforcement: boolean;
 	mode: string;
+	sovereignMode?: boolean;
+	killGlobal?: boolean;
+	killAgents?: string[];
+	pendingCount?: number;
 	enforcingGroups?: string[];
 	trialGroups?: string[];
 	links: { href: string; label: string }[];

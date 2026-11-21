@@ -355,3 +355,62 @@ test('playground searches all models and getting started downloads a secret-free
  await page.getByLabel('Gateway URL',{exact:true}).fill('https://user:secret@example.test');
  await expect(page.getByRole('button',{name:'Download prompt.md',exact:true})).toBeDisabled();
 });
+
+
+test('control centre and approvals inbox are accessible on desktop and mobile', async ({page}) => {
+ await login(page);
+ await page.goto(`${base}/ui/control-centre`);
+ await expect(page.getByRole('heading', {name: 'Control Centre', exact: true})).toBeVisible();
+ await expect(page.getByRole('heading', {name: 'Governance posture presets', exact: true})).toBeVisible();
+ await expect(page.getByRole('heading', {name: 'Emergency kill switches', exact: true})).toBeVisible();
+ await page.getByRole('button', {name: 'Review changes', exact: true}).first().click();
+ await expect(page.getByRole('region', {name: 'Preset changes', exact: true})).toBeVisible();
+ for (const width of [1440, 390]) {
+  await page.setViewportSize({width, height: 900});
+  for (let theme = 0; theme < 2; theme++) {
+   const axe = await new AxeBuilder({page}).withTags(tags).analyze();
+   expect(axe.violations, JSON.stringify(axe.violations)).toEqual([]);
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   await page.getByRole('button', {name: 'Toggle theme', exact: true}).click();
+  }
+ }
+ await page.setViewportSize({width: 1440, height: 900});
+ await page.goto(`${base}/ui/approvals`);
+ await expect(page.getByRole('heading', {name: 'Approvals', exact: true})).toBeVisible();
+ for (const width of [1440, 390]) {
+  await page.setViewportSize({width, height: 900});
+  for (let theme = 0; theme < 2; theme++) {
+   const axe = await new AxeBuilder({page}).withTags(tags).analyze();
+   expect(axe.violations, JSON.stringify(axe.violations)).toEqual([]);
+   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+   await page.getByRole('button', {name: 'Toggle theme', exact: true}).click();
+  }
+ }
+});
+
+
+test('enterprise identity, SIEM sinks, evidence pack and Intune rollout are accessible', async ({page}) => {
+ await login(page);
+ for (const [route, heading] of [
+  ['/ui/identity', 'Identity & Microsoft Entra'],
+  ['/ui/siem', 'SIEM & Microsoft Sentinel'],
+  ['/ui/evidence', 'Compliance & Evidence Pack'],
+ ]) {
+  await page.goto(`${base}${route}`);
+  await expect(page.getByRole('heading', {name: heading, exact: true})).toBeVisible();
+  for (const width of [1440, 390]) {
+   await page.setViewportSize({width, height: 900});
+   for (let theme = 0; theme < 2; theme++) {
+    const axe = await new AxeBuilder({page}).withTags(tags).analyze();
+    expect(axe.violations, JSON.stringify(axe.violations)).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('button', {name: 'Toggle theme', exact: true}).click();
+   }
+  }
+ }
+ await page.setViewportSize({width: 1440, height: 900});
+ await page.goto(`${base}/ui/llm/client-setup`);
+ await expect(page.getByRole('heading', {name: 'Enterprise Fleet Rollout (Microsoft Intune & Defender)', exact: true})).toBeVisible();
+ const axe = await new AxeBuilder({page}).withTags(tags).analyze();
+ expect(axe.violations, JSON.stringify(axe.violations)).toEqual([]);
+});

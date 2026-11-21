@@ -5,9 +5,195 @@
 //! not a certified OCSF mapping. Sentinel and Splunk bodies follow the public
 //! request shapes those products document for their ingestion APIs.
 
+use chrono::Utc;
+use rusqlite::params;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::Result;
 use crate::audit::AuditEvent;
+use crate::store::Store;
+
+pub const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS audit_sinks (
+  id TEXT PRIMARY KEY,
+  body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_sink_cursors (
+  sink_id TEXT PRIMARY KEY,
+  position INTEGER NOT NULL DEFAULT 0,
+  last_ok_at TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
+  sent_count INTEGER NOT NULL DEFAULT 0
+);
+"#;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AuditSink {
+	pub id: String,
+	pub name: String,
+	/// "sentinel" | "otlp" | "splunk" | "syslog"
+	pub kind: String,
+	pub enabled: bool,
+	pub capture_payloads: bool,
+	/// Generic endpoint (OTLP /v1/logs, Splunk HEC, Syslog HTTP) or Sentinel DCE URL.
+	pub endpoint: String,
+	/// Microsoft Sentinel Logs Ingestion API fields.
+	pub dcr_immutable_id: String,
+	pub stream_name: String,
+	/// "managed-identity" | "client-credentials"
+	pub auth_mode: String,
+	pub tenant_id: String,
+	pub client_id: String,
+	/// Secret: Entra client secret, Splunk HEC token, or Bearer token. Never returned in GET responses.
+	pub secret: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SinkStatus {
+	pub sink_id: String,
+	pub position: i64,
+	pub last_ok_at: String,
+	pub last_error: String,
+	pub sent_count: i64,
+}
+
+impl Store {
+	pub fn audit_sinks(&self) -> Result<Vec<AuditSink>> {
+		let mut stmt = self.conn.prepare("SELECT body FROM audit_sinks ORDER BY id")?;
+		let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+		rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+	}
+
+	pub fn save_audit_sink(&self, sink: &AuditSink, actor: &str) -> Result<()> {
+		let tx = self.conn.unchecked_transaction()?;
+		let existing = self
+			.audit_sinks()?
+			.into_iter()
+			.find(|item| item.id == sink.id);
+		let mut saved = sink.clone();
+		if saved.secret.is_empty()
+			&& let Some(prev) = &existing
+		{
+			saved.secret = prev.secret.clone();
+		}
+		self.conn.execute(
+			"INSERT INTO audit_sinks (id, body) VALUES (?1, ?2)
+			 ON CONFLICT(id) DO UPDATE SET body = excluded.body",
+			params![saved.id, serde_json::to_string(&saved)?],
+		)?;
+		// Start a new or newly-enabled sink at the latest event so it does not replay old history.
+		let start_pos: i64 = self.conn.query_row(
+			"SELECT COALESCE(MAX(rowid), 0) FROM audit_events",
+			[],
+			|r| r.get(0),
+		)?;
+		self.conn.execute(
+			"INSERT OR IGNORE INTO audit_sink_cursors (sink_id, position, last_ok_at, last_error, sent_count)
+			 VALUES (?1, ?2, '', '', 0)",
+			params![saved.id, start_pos],
+		)?;
+		self.append_audit(&AuditEvent::new(
+			"sinks",
+			actor,
+			"",
+			"",
+			"",
+			"allow",
+			"SIEM audit sink saved",
+			json!({"id": saved.id, "name": saved.name, "kind": saved.kind, "enabled": saved.enabled}),
+		))?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	pub fn delete_audit_sink(&self, id: &str, actor: &str) -> Result<()> {
+		let tx = self.conn.unchecked_transaction()?;
+		self.conn
+			.execute("DELETE FROM audit_sinks WHERE id = ?1", [id])?;
+		self.conn
+			.execute("DELETE FROM audit_sink_cursors WHERE sink_id = ?1", [id])?;
+		self.append_audit(&AuditEvent::new(
+			"sinks",
+			actor,
+			"",
+			"",
+			"",
+			"allow",
+			"SIEM audit sink removed",
+			json!({"id": id}),
+		))?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	pub fn audit_sink_statuses(&self) -> Result<Vec<SinkStatus>> {
+		let mut stmt = self.conn.prepare(
+			"SELECT sink_id, position, last_ok_at, last_error, sent_count FROM audit_sink_cursors",
+		)?;
+		let rows = stmt.query_map([], |r| {
+			Ok(SinkStatus {
+				sink_id: r.get(0)?,
+				position: r.get(1)?,
+				last_ok_at: r.get(2)?,
+				last_error: r.get(3)?,
+				sent_count: r.get(4)?,
+			})
+		})?;
+		rows.map(|r| Ok(r?)).collect()
+	}
+
+	pub fn audit_sink_batch(&self, sink_id: &str, limit: usize) -> Result<Vec<(i64, AuditEvent)>> {
+		let position: i64 = self
+			.conn
+			.query_row(
+				"SELECT COALESCE((SELECT position FROM audit_sink_cursors WHERE sink_id = ?1), 0)",
+				[sink_id],
+				|r| r.get(0),
+			)?;
+		let mut stmt = self.conn.prepare(
+			"SELECT id, at, kind, actor, agent_id, tool, model, decision, reason, detail, telemetry, rowid
+			 FROM audit_events WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
+		)?;
+		let mut rows = stmt.query(params![position, limit as i64])?;
+		let mut out = Vec::new();
+		while let Some(row) = rows.next()? {
+			out.push((row.get(11)?, crate::store::read_audit(row)?));
+		}
+		Ok(out)
+	}
+
+	pub fn audit_sink_record_result(
+		&self,
+		sink_id: &str,
+		advance_to: Option<i64>,
+		sent_delta: usize,
+		error: Option<&str>,
+	) -> Result<()> {
+		let now = Utc::now().to_rfc3339();
+		if let Some(pos) = advance_to {
+			if let Some(err) = error {
+				self.conn.execute(
+					"UPDATE audit_sink_cursors SET position = ?2, last_error = ?3 WHERE sink_id = ?1",
+					params![sink_id, pos, err],
+				)?;
+			} else {
+				self.conn.execute(
+					"UPDATE audit_sink_cursors SET position = ?2, last_ok_at = ?3, last_error = '', sent_count = sent_count + ?4 WHERE sink_id = ?1",
+					params![sink_id, pos, now, sent_delta as i64],
+				)?;
+			}
+		} else if let Some(err) = error {
+			self.conn.execute(
+				"UPDATE audit_sink_cursors SET last_error = ?2 WHERE sink_id = ?1",
+				params![sink_id, err],
+			)?;
+		}
+		Ok(())
+	}
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct SinkConfig {

@@ -106,14 +106,38 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Response 
 		.map(|n| json!({"href": n.path, "label": n.label}))
 		.collect();
 	let (enforcing, trial) = super::cohort_names(&state);
+	let settings = load_settings(&state);
+	let kill = crate::control_centre::active_kill_switch(&state);
+	let can_view_control_centre = crate::control_centre::can_view_control_centre(&state, &session);
+	let can_view_approvals = crate::control_centre::can_view_approvals(&state, &session);
+	let can_view_identity = crate::enterprise::can_view_identity(&state, &session);
+	let can_view_evidence = crate::enterprise::can_view_evidence(&state, &session);
+	let can_view_sinks = access::allows(&state, &session, Permission::ReadSettings);
+	let pending_count = if can_view_approvals {
+		let (revs, items) = crate::control_centre::pending_counts(&state);
+		revs + items
+	} else {
+		0
+	};
 	let mut response = Json(json!({
 			"name": session.name,
-						"subject": session.subject, "email": session.email, "canLogout": true,
-						"canReadGateway": access::allows(&state, &session, Permission::ReadGatewayConfig),
-						"canManagePeople": access::allows(&state, &session, Permission::ManageAccess),
-						"canUseSubscriptionPools": crate::pools::can_use(&state, &session),
+			"subject": session.subject,
+			"email": session.email,
+			"canLogout": true,
+			"canReadGateway": access::allows(&state, &session, Permission::ReadGatewayConfig),
+			"canManagePeople": access::allows(&state, &session, Permission::ManageAccess),
+			"canUseSubscriptionPools": crate::pools::can_use(&state, &session),
+			"canViewControlCentre": can_view_control_centre,
+			"canViewApprovals": can_view_approvals,
+			"canViewIdentity": can_view_identity,
+			"canViewEvidence": can_view_evidence,
+			"canViewSinks": can_view_sinks,
 			"roles": access::role_names(&state, &session),
-			"mode": load_settings(&state).guardrail_mode.as_str(),
+			"mode": settings.guardrail_mode.as_str(),
+			"sovereignMode": settings.sovereign_mode,
+			"killGlobal": kill.global,
+			"killAgents": kill.agents,
+			"pendingCount": pending_count,
 			"enforcingGroups": enforcing,
 			"trialGroups": trial,
 			"canChangeEnforcement": access::allows(&state, &session, Permission::ChangeEnforcement),

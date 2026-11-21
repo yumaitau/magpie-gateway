@@ -462,11 +462,23 @@ const options: [string, string][] = [
 ];
 export function helpTopic(path: string): string {
 	if (path.includes('dlp')) return 'dlp';
-	if (path.includes('alerts')) return 'alerts';
-	if (path.includes('people') || path.includes('account') || path.includes('access'))
+	if (path.includes('alerts') || path.includes('siem')) return 'alerts';
+	if (
+		path.includes('people') ||
+		path.includes('account') ||
+		path.includes('access') ||
+		path.includes('identity')
+	)
 		return 'people';
 	if (path.includes('client') || path.includes('keys')) return 'clients';
-	if (path.includes('governance') || path.includes('guardrail') || path.includes('polic'))
+	if (
+		path.includes('control-centre') ||
+		path.includes('approvals') ||
+		path.includes('evidence') ||
+		path.includes('governance') ||
+		path.includes('guardrail') ||
+		path.includes('polic')
+	)
 		return 'controls';
 	if (path.includes('mcp') || path.includes('traffic')) return 'mcp';
 	if (path.includes('logs')) return 'troubleshooting';

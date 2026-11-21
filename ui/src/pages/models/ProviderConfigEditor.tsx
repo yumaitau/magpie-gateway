@@ -301,6 +301,13 @@ export function ProviderConfigEditor(props: {
 									/>
 								</Field>
 							) : null}
+							<p className="field-hint">
+								Australian residency tip: prefer <strong>Australia East Standard (Regional)</strong>{' '}
+								deployments with <strong>Managed Identity</strong> when running in Azure under
+								Sovereign Mode. Data Zone (Asia Pacific) and Global deployments process outside
+								Australia and require Sovereign Mode off (for example via the Enterprise Standard
+								preset).
+							</p>
 						</div>
 					) : null}
 					{provider === 'custom' &&
