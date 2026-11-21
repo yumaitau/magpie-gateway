@@ -2941,7 +2941,6 @@ async fn guardrail_for(client: &Client, base: &str, actor: &str) -> serde_json::
 	response.json().await.expect("body")
 }
 
-
 #[tokio::test]
 async fn control_centre_presets_cohorts_kill_switch_and_approvals_inbox() {
 	let base = spawn(false).await;
@@ -3171,7 +3170,6 @@ async fn control_centre_presets_cohorts_kill_switch_and_approvals_inbox() {
 	);
 }
 
-
 #[tokio::test]
 async fn enterprise_scim_sync_sentinel_sinks_and_live_evidence_pack() {
 	let base = spawn(false).await;
@@ -3298,7 +3296,11 @@ async fn enterprise_scim_sync_sentinel_sinks_and_live_evidence_pack() {
 		.await
 		.unwrap();
 	assert_eq!(saved_sink["hasSecret"], true);
-	assert!(!saved_sink.to_string().contains("super-secret-client-credential"));
+	assert!(
+		!saved_sink
+			.to_string()
+			.contains("super-secret-client-credential")
+	);
 
 	// Sentinel DCR + KQL analytics pack downloads cleanly with all 6 detection rules.
 	let pack: serde_json::Value = sam

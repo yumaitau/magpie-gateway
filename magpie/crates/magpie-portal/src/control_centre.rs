@@ -939,10 +939,7 @@ async fn list_approvals(State(state): State<AppState>, headers: HeaderMap) -> Re
 		Err(r) => return r,
 	};
 	if !can_view_approvals(&state, &session) {
-		return json_error(
-			StatusCode::FORBIDDEN,
-			"Your role cannot view approvals.",
-		);
+		return json_error(StatusCode::FORBIDDEN, "Your role cannot view approvals.");
 	}
 	let can_approve = access::allows(&state, &session, Permission::Approve);
 	let can_submit = access::allows(&state, &session, Permission::SubmitApproval);
@@ -1191,7 +1188,10 @@ async fn decide_item_approval(
 				|| approval.business_owner.eq_ignore_ascii_case(&session.email)
 				|| approval.business_owner.eq_ignore_ascii_case(&session.name)
 			{
-				return json_error(StatusCode::FORBIDDEN, "You cannot approve your own request.");
+				return json_error(
+					StatusCode::FORBIDDEN,
+					"You cannot approve your own request.",
+				);
 			}
 			approval.status = ApprovalStatus::Approved;
 			let mut updated = doc;
@@ -1223,8 +1223,7 @@ async fn decide_item_approval(
 			}
 			drop(store);
 			let approvals = load_approvals(&state);
-			let cel =
-				magpie::approvals::cel_for_approved_tools(&approvals, Utc::now().date_naive());
+			let cel = magpie::approvals::cel_for_approved_tools(&approvals, Utc::now().date_naive());
 			let _ = save_revision(
 				&state,
 				"policy",
@@ -1300,10 +1299,7 @@ async fn submit_approval(
 		"mcpServer" => ItemKind::McpServer,
 		"tool" => ItemKind::Tool,
 		_ => {
-			return json_error(
-				StatusCode::BAD_REQUEST,
-				"Choose tool, model, or mcpServer.",
-			);
+			return json_error(StatusCode::BAD_REQUEST, "Choose tool, model, or mcpServer.");
 		},
 	};
 	let mut use_case = magpie::register::UseCase::example();
