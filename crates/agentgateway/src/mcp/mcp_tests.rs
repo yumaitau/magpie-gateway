@@ -3887,7 +3887,8 @@ async fn authorization_deny_with_request_header_filters_per_agent() {
 		let client_info = ClientConfig::new(
 			ClientCapabilities::default(),
 			Implementation::new(format!("test-{agent_name}"), "0.0.1"),
-		);
+		)
+		.with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE);
 		client_info
 			.serve(transport)
 			.await
@@ -4469,7 +4470,8 @@ pub async fn mcp_streamable_client(
 	let client_info = ClientConfig::new(
 		ClientCapabilities::default(),
 		Implementation::new("test client".to_string(), "0.0.1".to_string()),
-	);
+	)
+	.with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE);
 
 	Box::pin(client_info.serve(transport))
 		.await
@@ -5122,7 +5124,8 @@ pub async fn mcp_streamable_client_with_ui(
 			.enable_extensions_with(extensions)
 			.build(),
 		Implementation::new("test client".to_string(), "0.0.1".to_string()),
-	);
+	)
+	.with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE);
 
 	Box::pin(client_info.serve(transport))
 		.await
@@ -5618,6 +5621,7 @@ mod mockserver {
 	impl ServerHandler for PagingServer {
 		fn get_info(&self) -> ServerConfig {
 			ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+				.with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
 		}
 
 		async fn list_tools(
@@ -7179,7 +7183,8 @@ async fn try_mcp_streamable_client(
 	let client_info = ClientConfig::new(
 		ClientCapabilities::default(),
 		Implementation::new("test client".to_string(), "0.0.1".to_string()),
-	);
+	)
+	.with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE);
 
 	Box::pin(client_info.serve(transport)).await
 }
