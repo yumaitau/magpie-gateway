@@ -4488,6 +4488,11 @@ struct ResourceUpdateClient {
 }
 
 impl rmcp::ClientHandler for ResourceUpdateClient {
+	fn get_info(&self) -> rmcp::model::ClientConfig {
+		rmcp::model::ClientConfig::default()
+			.with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE)
+	}
+
 	async fn on_resource_updated(
 		&self,
 		params: rmcp::model::ResourceUpdatedNotificationParam,
